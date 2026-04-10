@@ -14,3 +14,4 @@ __pycache__/
 
 # Repo copy of FerretNet (not needed)
 _FerretNet_repo/
+weights/Resnet50_Final.pth
