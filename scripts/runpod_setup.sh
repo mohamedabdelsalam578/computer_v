@@ -1,83 +1,73 @@
 #!/bin/bash
 # ============================================================
-# RunPod Setup Script — FerretNet Training
-# Run this once inside the pod terminal after connecting.
+# RunPod Setup — FerretNet Training
+# Dataset downloads directly from Kaggle (no upload needed).
 #
-# Usage:
+# Before running:
+#   1. Push code to GitHub
+#   2. Set KAGGLE_USERNAME and KAGGLE_KEY env vars in RunPod
+#      (RunPod UI → Pod → Environment Variables)
+#
+# Usage inside pod terminal:
 #   bash scripts/runpod_setup.sh
 # ============================================================
 set -e
 
 REPO_URL="https://github.com/YOUR_USERNAME/YOUR_REPO.git"   # ← change this
-PROJECT_ROOT="/workspace/AI_COMPUTER_VISION"
-MAC_PREFIX="/Users/MAC/Desktop/Projects/AI_COMPUTER_VISION"
+export PROJECT_ROOT="/workspace/AI_COMPUTER_VISION"
 
-echo "=== Step 1: Clone repo ==="
+echo "=== [1/6] Clone repo ==="
 git clone "$REPO_URL" "$PROJECT_ROOT"
 cd "$PROJECT_ROOT"
-
-echo "=== Step 2: Install dependencies ==="
-pip install -q -r requirements.txt
-pip install -q tensorboard
-
-echo "=== Step 3: Verify GPU ==="
-python3 -c "import torch; print('CUDA:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0))"
-
-echo "=== Step 4: Download dataset from HuggingFace ==="
-# Upload your data_raw/ folder to HuggingFace first:
-#   huggingface-cli upload YOUR_USERNAME/gravex-200k data_raw/ data_raw/
-# Then pull it here:
-pip install -q huggingface_hub
-python3 -c "
-from huggingface_hub import snapshot_download
-snapshot_download(
-    repo_id='YOUR_USERNAME/gravex-200k',   # ← change this
-    repo_type='dataset',
-    local_dir='data_raw/'
-)
-print('Dataset downloaded.')
-"
-
-echo "=== Step 5: Download weights ==="
-# ferretnet-b-median-3.pth — either push to git or download here
-# If it's in the repo already: nothing to do
-# Otherwise: gdown / wget from wherever you stored it
-mkdir -p weights/
-# Example: gdown "https://drive.google.com/uc?id=YOUR_ID" -O weights/ferretnet-b-median-3.pth
-
-echo "=== Step 6: Remap manifest paths ==="
-# The CSVs have Mac absolute paths — remap them to pod paths
-python3 -c "
-import os
-mac_prefix = '$MAC_PREFIX'
-pod_prefix = '$PROJECT_ROOT'
-manifests = [
-    'data_raw/manifests/train_with_faces.csv',
-    'data_raw/manifests/val_with_faces.csv',
-    'data_raw/manifests/test_with_faces.csv',
-]
-for path in manifests:
-    if not os.path.exists(path):
-        print(f'Skipping {path} — not found')
-        continue
-    with open(path, 'r') as f:
-        content = f.read()
-    content = content.replace(mac_prefix, pod_prefix)
-    with open(path, 'w') as f:
-        f.write(content)
-    print(f'Remapped: {path}')
-"
-
-echo "=== Step 7: Set PROJECT_ROOT env var ==="
-export PROJECT_ROOT="$PROJECT_ROOT"
 echo "export PROJECT_ROOT=$PROJECT_ROOT" >> ~/.bashrc
 
+echo "=== [2/6] Install dependencies ==="
+pip install -q -r requirements.txt
+pip install -q kagglehub tensorboard
+
+echo "=== [3/6] Verify GPU ==="
+python3 -c "
+import torch
+print('CUDA:', torch.cuda.is_available())
+print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')
+"
+
+echo "=== [4/6] Download dataset from Kaggle ==="
+# Kaggle credentials come from env vars set in RunPod UI:
+#   KAGGLE_USERNAME = your kaggle username
+#   KAGGLE_KEY      = your kaggle API key
+mkdir -p ~/.kaggle
+echo "{\"username\":\"$KAGGLE_USERNAME\",\"key\":\"$KAGGLE_KEY\"}" > ~/.kaggle/kaggle.json
+chmod 600 ~/.kaggle/kaggle.json
+
+python3 -c "
+import kagglehub, shutil, os
+from pathlib import Path
+
+print('Downloading GRAVEX-200K from Kaggle...')
+cache_path = kagglehub.dataset_download('muhammadbilal6305/200k-real-vs-ai-visuals-by-mbilal')
+dest = Path('data_raw/gravex_200k')
+dest.mkdir(parents=True, exist_ok=True)
+for item in Path(cache_path).iterdir():
+    d = dest / item.name
+    if not d.exists():
+        if item.is_dir(): shutil.copytree(str(item), str(d))
+        else: shutil.copy2(str(item), str(d))
+print('Dataset ready at', dest)
+"
+
+echo "=== [5/6] Generate manifests ==="
+python3 scripts/download_data.py --skip-download
+
+echo "=== [6/6] Precompute face crops (GPU-accelerated) ==="
+# On RTX 4090: ~500 img/s → 200k images done in ~7 minutes
+python3 scripts/precompute_face_crops.py
+
 echo ""
-echo "=== Setup complete! ==="
-echo ""
-echo "Start training:"
-echo "  cd $PROJECT_ROOT"
+echo "============================================"
+echo "  Setup complete! Start training:"
 echo "  python3 training/train.py"
 echo ""
-echo "Monitor with TensorBoard:"
-echo "  tensorboard --logdir $PROJECT_ROOT/lightning_logs --host 0.0.0.0 --port 6006"
+echo "  Monitor with TensorBoard:"
+echo "  tensorboard --logdir lightning_logs --host 0.0.0.0 --port 6006"
+echo "============================================"

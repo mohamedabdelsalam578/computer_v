@@ -11,7 +11,7 @@ from retinaface.py_cpu_nms import py_cpu_nms
 
 
 class RetinaFaceDetector:
-    """High-level wrapper for RetinaFace face detection on MPS/CPU."""
+    """High-level wrapper for RetinaFace face detection on CUDA/MPS/CPU."""
 
     def __init__(
         self,
@@ -24,7 +24,12 @@ class RetinaFaceDetector:
         vis_threshold: float = 0.6,
         min_face_size: int = 30,
     ):
-        self.device = torch.device(device if torch.backends.mps.is_available() or device == "cpu" else "cpu")
+        if device == "cuda" and torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        elif device == "mps" and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        else:
+            self.device = torch.device("cpu")
         self.cfg = cfg_re50
         self.confidence_threshold = confidence_threshold
         self.nms_threshold = nms_threshold

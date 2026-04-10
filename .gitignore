@@ -9,11 +9,8 @@ __pycache__/
 .idea/
 *.egg-info/
 
-# Weights — upload separately
-weights/Resnet50_Final.pth
-
-# Keep FerretNet weight tracked if small enough, otherwise add here
-# weights/ferretnet-b-median-3.pth
+# Weights — Resnet50 goes via Git LFS (104 MB)
+# ferretnet-b-median-3.pth is small (4 MB) — tracked normally
 
 # Repo copy of FerretNet (not needed)
 _FerretNet_repo/
