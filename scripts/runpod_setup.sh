@@ -25,14 +25,13 @@ echo "=== [2/6] Install dependencies ==="
 pip install -q -r requirements.txt
 pip install -q kagglehub tensorboard
 
-echo "=== [3/6] Download RetinaFace weights ==="
+echo "=== [3/6] Download RetinaFace weights from Google Drive ==="
 mkdir -p weights/
 pip install -q gdown
-# Resnet50_Final.pth — RetinaFace pretrained weight (104 MB)
-# Upload this file to your Google Drive and paste the file ID below
-# OR host it anywhere and use wget/curl
-# gdown "https://drive.google.com/uc?id=YOUR_GDRIVE_FILE_ID" -O weights/Resnet50_Final.pth
-echo "*** ACTION NEEDED: add download URL for Resnet50_Final.pth above ***"
+# Downloads Resnet50_Final.pth from your Google Drive folder
+gdown --folder "https://drive.google.com/drive/folders/1gAeC7Vqaq8QlRDGAfcLa_Oho0uNzTMcH" \
+      --output weights/ --remaining-ok
+echo "Weights downloaded."
 
 echo "=== [3b/6] Verify GPU ==="
 python3 -c "
