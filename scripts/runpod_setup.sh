@@ -16,10 +16,17 @@ set -e
 REPO_URL="https://github.com/YOUR_USERNAME/YOUR_REPO.git"   # ← change this
 export PROJECT_ROOT="/workspace/AI_COMPUTER_VISION"
 
-echo "=== [1/6] Clone repo ==="
-git clone "$REPO_URL" "$PROJECT_ROOT"
-cd "$PROJECT_ROOT"
+echo "=== [1/6] Repo check ==="
+# If already cloned (running from inside the repo), just stay here
+if [ -f "training/train.py" ]; then
+    echo "Already inside repo — skipping clone."
+    PROJECT_ROOT="$(pwd)"
+else
+    git clone "$REPO_URL" "$PROJECT_ROOT"
+    cd "$PROJECT_ROOT"
+fi
 echo "export PROJECT_ROOT=$PROJECT_ROOT" >> ~/.bashrc
+export PROJECT_ROOT="$PROJECT_ROOT"
 
 echo "=== [2/6] Install dependencies ==="
 pip install -q -r requirements.txt
