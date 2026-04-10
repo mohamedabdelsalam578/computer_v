@@ -1,0 +1,19 @@
+# Data — too large for git (upload separately to HuggingFace/Drive)
+data_raw/
+lightning_logs/
+results/
+__pycache__/
+*.pyc
+.DS_Store
+.cursor/
+.idea/
+*.egg-info/
+
+# Weights — upload separately
+weights/Resnet50_Final.pth
+
+# Keep FerretNet weight tracked if small enough, otherwise add here
+# weights/ferretnet-b-median-3.pth
+
+# Repo copy of FerretNet (not needed)
+_FerretNet_repo/
