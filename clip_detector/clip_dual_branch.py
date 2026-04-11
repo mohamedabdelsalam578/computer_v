@@ -42,13 +42,25 @@ class CLIPDualBranchDetector(nn.Module):
         nn.init.zeros_(self.full_head.bias)
 
         # Gradient checkpointing: trades compute for memory (~60% less VRAM)
-        # Allows larger batch sizes on RTX 4090 without OOM
         self.face_encoder.gradient_checkpointing_enable()
         self.full_encoder.gradient_checkpointing_enable()
+
+        # CLIPVisionModel.from_pretrained() leaves internal modules in eval mode.
+        # Explicitly set train mode so dropout/checkpointing work correctly.
+        self.face_encoder.train()
+        self.full_encoder.train()
 
         print(f"  CLIP hidden_size: {hidden_size}  |  Total params: "
               f"{sum(p.numel() for p in self.parameters()) / 1e6:.1f}M  |  "
               f"gradient checkpointing: ON")
+
+    def train(self, mode: bool = True):
+        """Override to ensure CLIP encoder submodules follow train/eval mode."""
+        super().train(mode)
+        # Propagate explicitly — CLIPVisionModel internals can get stuck in eval
+        self.face_encoder.train(mode)
+        self.full_encoder.train(mode)
+        return self
 
     def _encode(self, encoder: CLIPVisionModel, x: torch.Tensor) -> torch.Tensor:
         """Returns pooled CLS token features: (B, hidden_size)."""

@@ -39,7 +39,7 @@ if torch.cuda.is_available():
     ACCELERATOR = 'gpu'
     DEVICE_NAME = torch.cuda.get_device_name(0)
     PIN_MEMORY  = True
-    NUM_WORKERS = min(16, os.cpu_count() or 4)
+    NUM_WORKERS = min(4, os.cpu_count() or 4)   # keep low — CLIP workers can deadlock
     # CLIP ViT-L/14 is ~307M params per branch → 614M total dual-branch
     # RTX 4090 (24GB): 606M dual-branch CLIP needs gradient checkpointing.
     # bs=16 + accum=8 = effective 128. Checkpointing saves ~60% activation memory.
@@ -128,13 +128,14 @@ def main():
         random_face_select=False,
     )
 
+    _persist = train_cfg.num_workers > 0
     train_loader = DataLoader(
         train_dataset,
         batch_size=train_cfg.batch_size,
         shuffle=True,
         num_workers=train_cfg.num_workers,
-        persistent_workers=True,
-        prefetch_factor=2,
+        persistent_workers=_persist,
+        prefetch_factor=2 if _persist else None,
         drop_last=True,
         pin_memory=PIN_MEMORY,
     )
@@ -143,8 +144,8 @@ def main():
         batch_size=train_cfg.batch_size * 2,
         shuffle=False,
         num_workers=train_cfg.num_workers,
-        persistent_workers=True,
-        prefetch_factor=2,
+        persistent_workers=_persist,
+        prefetch_factor=2 if _persist else None,
         pin_memory=PIN_MEMORY,
     )
 
