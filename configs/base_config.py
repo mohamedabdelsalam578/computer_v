@@ -49,13 +49,13 @@ class DataConfig:
 class TrainConfig:
     batch_size: int = 64
     max_epochs: int = 15
-    learning_rate: float = 1e-4
+    learning_rate: float = 5e-5   # lower lr — pretrained weights are sensitive
     betas: tuple = (0.937, 0.999)
     weight_decay: float = 5e-4
-    warmup_epochs: int = 2
-    gradient_clip_val: float = 1.0
+    warmup_epochs: int = 3
+    gradient_clip_val: float = 0.5  # tighter clip to prevent gradient explosion
     precision: str = "16-mixed"
-    num_workers: int = 16      # 128 CPU cores on RunPod — use 16 for I/O
+    num_workers: int = 16
     early_stopping_patience: int = 5
     face_loss_weight: float = 0.5
     full_loss_weight: float = 0.5
