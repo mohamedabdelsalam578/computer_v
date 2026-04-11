@@ -224,7 +224,7 @@ def main():
                     for future in as_completed(futures):
                         result = future.result()
                         all_output_rows.extend(result)
-                        pbar.update(len(result)))
+                        pbar.update(len(result))
 
         # Write manifest
         output_path = manifests_dir / f"{split_name}_with_faces.csv"
