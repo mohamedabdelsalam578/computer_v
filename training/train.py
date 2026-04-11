@@ -240,7 +240,14 @@ def main():
         )
     print(f"{'='*60}\n")
 
-    trainer.fit(model, train_loader, val_loader, ckpt_path=ckpt_path_fit)
+    # PyTorch 2.6+ defaults torch.load(weights_only=True); Lightning .ckpt pickles hparams dataclasses.
+    trainer.fit(
+        model,
+        train_loader,
+        val_loader,
+        ckpt_path=ckpt_path_fit,
+        weights_only=False if ckpt_path_fit else None,
+    )
 
 
 if __name__ == '__main__':

@@ -28,7 +28,10 @@ class FerretNetPipeline:
 
         # Load FerretNet from Lightning checkpoint
         from ferretnet.lightning_module import FerretNetLightning
-        lightning_model = FerretNetLightning.load_from_checkpoint(checkpoint_path)
+        lightning_model = FerretNetLightning.load_from_checkpoint(
+            checkpoint_path,
+            weights_only=False,
+        )
         self.model = lightning_model.model
         self.model.to(self.device)
         self.model.eval()

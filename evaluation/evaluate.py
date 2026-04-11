@@ -53,7 +53,10 @@ def main():
 
     # Load model
     print(f"Loading checkpoint: {args.checkpoint}")
-    model = FerretNetLightning.load_from_checkpoint(args.checkpoint)
+    model = FerretNetLightning.load_from_checkpoint(
+        args.checkpoint,
+        weights_only=False,  # PyTorch 2.6+ safe unpickle for Lightning hparams in .ckpt
+    )
     model.eval()
     model.to(device)
 
