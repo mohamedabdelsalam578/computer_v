@@ -100,9 +100,18 @@ class FerretNetLightning(pl.LightningModule):
         self._val_total.clear()
 
     def configure_optimizers(self):
+        # Differential learning rates:
+        # backbone gets 10x lower lr to preserve pretrained features
+        # classifier head gets full lr to adapt to new dataset
+        backbone_params = [p for n, p in self.model.named_parameters()
+                          if 'logit' not in n]
+        head_params = [p for n, p in self.model.named_parameters()
+                      if 'logit' in n]
         optimizer = torch.optim.Adam(
-            self.parameters(),
-            lr=self.train_cfg.learning_rate,
+            [
+                {'params': backbone_params, 'lr': self.train_cfg.learning_rate * 0.1},
+                {'params': head_params,     'lr': self.train_cfg.learning_rate},
+            ],
             betas=self.train_cfg.betas,
             weight_decay=self.train_cfg.weight_decay,
         )

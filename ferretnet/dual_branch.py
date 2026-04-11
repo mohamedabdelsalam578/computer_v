@@ -39,14 +39,6 @@ class DualBranchFerretNet(nn.Module):
             state_dict = state_dict['model']
         model.load_state_dict(state_dict)
 
-        # Re-initialize the final classification head with near-zero bias
-        # The pretrained logit layer has large negative bias (-10) which
-        # causes extreme loss at the start of fine-tuning
-        for m in model.logit.modules():
-            if isinstance(m, torch.nn.Linear):
-                torch.nn.init.xavier_uniform_(m.weight)
-                torch.nn.init.zeros_(m.bias)
-
         return model
 
     def forward(self, face_crop, full_image):
