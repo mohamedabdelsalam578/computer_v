@@ -37,7 +37,10 @@ class FerretNetLightning(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         face_crops, full_images, labels = batch
-        labels = labels.float().unsqueeze(1)
+        # FerretNet pretrained convention: 0=AI/fake, 1=real
+        # Our dataset convention: 0=real, 1=AI
+        # Flip labels to match pretrained weights
+        labels = (1 - labels).float().unsqueeze(1)
 
         face_logits, full_logits = self.model(face_crops, full_images)
 
@@ -51,7 +54,8 @@ class FerretNetLightning(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         face_crops, full_images, labels = batch
-        labels = labels.float().unsqueeze(1)
+        # Flip labels to match pretrained FerretNet convention (0=AI, 1=real)
+        labels = (1 - labels).float().unsqueeze(1)
 
         face_logits, full_logits = self.model(face_crops, full_images)
 
