@@ -12,6 +12,7 @@ Usage:
     python training/train_clip.py --resume lightning_logs_clip/checkpoints/last.ckpt
     python training/train_clip.py --model ViT-B/32   # smaller/faster
     python training/train_clip.py --epochs 20 --lr 3e-4
+    python training/train_clip.py --batch_size 128 --accum_grad_batches 1 --num_workers 16
 """
 import os
 
@@ -39,7 +40,7 @@ if torch.cuda.is_available():
     ACCELERATOR = 'gpu'
     DEVICE_NAME = torch.cuda.get_device_name(0)
     PIN_MEMORY  = True
-    NUM_WORKERS = 8    # 8 workers safe when started clean; num_workers=0 was 0.5 it/s bottleneck
+    NUM_WORKERS = 12   # raise if GPU telemetry stays low while CPU is busy (data loading bound)
     # Shared encoder (307M) — NO gradient checkpointing needed.
     # bs=64 sends 128 images (face+full stacked) per encoder pass.
     BATCH_SIZE  = 64
@@ -85,7 +86,12 @@ def main():
                         help='Resume from Lightning checkpoint (full state).')
     parser.add_argument('--model',      type=str,   default='ViT-B/32',
                         choices=list(MODEL_MAP.keys()))
-    parser.add_argument('--batch_size', type=int,   default=None)
+    parser.add_argument('--batch_size', type=int,   default=None,
+                        help='Per-step batch; increase if VRAM is low (e.g. 96–128 on 24GB for ViT-B/32).')
+    parser.add_argument('--accum_grad_batches', type=int, default=None,
+                        help='Gradient accumulation steps (default: 2 on GPU). Use 1 with larger batch to feed GPU.')
+    parser.add_argument('--num_workers', type=int, default=None,
+                        help='DataLoader workers (default: 12 on CUDA). Try 16 if GPU util is low.')
     parser.add_argument('--epochs',     type=int,   default=None)
     parser.add_argument('--lr',         type=float, default=None)
     args = parser.parse_args()
@@ -103,8 +109,12 @@ def main():
 
     # CLI overrides
     if args.batch_size: train_cfg.batch_size  = args.batch_size
+    if args.num_workers is not None:
+        train_cfg.num_workers = args.num_workers
     if args.epochs:     train_cfg.max_epochs  = args.epochs
     if args.lr:         train_cfg.learning_rate = args.lr
+
+    accum_grad = ACCUM if args.accum_grad_batches is None else args.accum_grad_batches
 
     clip_model_name = MODEL_MAP[args.model]
     manifests_dir   = proj_cfg.data_raw / "manifests"
@@ -128,13 +138,14 @@ def main():
     )
 
     _persist = train_cfg.num_workers > 0
+    _prefetch = (4 if ACCELERATOR == "gpu" else 2) if _persist else None
     train_loader = DataLoader(
         train_dataset,
         batch_size=train_cfg.batch_size,
         shuffle=True,
         num_workers=train_cfg.num_workers,
         persistent_workers=_persist,
-        prefetch_factor=2 if _persist else None,
+        prefetch_factor=_prefetch,
         drop_last=True,
         pin_memory=PIN_MEMORY,
     )
@@ -144,7 +155,7 @@ def main():
         shuffle=False,
         num_workers=train_cfg.num_workers,
         persistent_workers=_persist,
-        prefetch_factor=2 if _persist else None,
+        prefetch_factor=_prefetch,
         pin_memory=PIN_MEMORY,
     )
 
@@ -184,7 +195,7 @@ def main():
         max_epochs=train_cfg.max_epochs,
         gradient_clip_val=train_cfg.gradient_clip_val,
         precision=train_cfg.precision,
-        accumulate_grad_batches=ACCUM,
+        accumulate_grad_batches=accum_grad,
         callbacks=callbacks,
         default_root_dir=str(proj_cfg.project_root),
         log_every_n_steps=50,
@@ -192,13 +203,13 @@ def main():
         num_sanity_val_steps=0,   # skip sanity check — gradient checkpointing + eval deadlocks
     )
 
-    eff_bs = train_cfg.batch_size * ACCUM
+    eff_bs = train_cfg.batch_size * accum_grad
     steps  = len(train_dataset) // eff_bs
     print(f"\n{'='*60}")
     print(f"  Model:           CLIP {args.model}  ({clip_model_name})")
     print(f"  Device:          {DEVICE_NAME}")
     print(f"  Accelerator:     {ACCELERATOR.upper()}")
-    print(f"  Batch size:      {train_cfg.batch_size} × accum {ACCUM} = {eff_bs} effective")
+    print(f"  Batch size:      {train_cfg.batch_size} × accum {accum_grad} = {eff_bs} effective")
     print(f"  Workers:         {train_cfg.num_workers}")
     print(f"  Precision:       {train_cfg.precision}")
     print(f"  Steps/epoch:     {steps:,}")
