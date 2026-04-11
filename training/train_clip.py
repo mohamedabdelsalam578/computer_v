@@ -39,7 +39,7 @@ if torch.cuda.is_available():
     ACCELERATOR = 'gpu'
     DEVICE_NAME = torch.cuda.get_device_name(0)
     PIN_MEMORY  = True
-    NUM_WORKERS = 0    # GPU is the bottleneck; workers cause semaphore issues on RunPod
+    NUM_WORKERS = 8    # 8 workers safe when started clean; num_workers=0 was 0.5 it/s bottleneck
     # Shared encoder (307M) — NO gradient checkpointing needed.
     # bs=64 sends 128 images (face+full stacked) per encoder pass.
     BATCH_SIZE  = 64
