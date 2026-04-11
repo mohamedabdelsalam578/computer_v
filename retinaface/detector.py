@@ -38,34 +38,39 @@ class RetinaFaceDetector:
         self.vis_threshold = vis_threshold
         self.min_face_size = min_face_size
 
+        # Cache priorbox per image size to avoid recomputing every call
+        self._prior_cache = {}
+
         # Build model
         self.model = RetinaFace(cfg=self.cfg, phase='test')
         self._load_weights(weights_path)
         self.model.to(self.device)
         self.model.eval()
+        # Warmup
+        with torch.no_grad():
+            dummy = torch.zeros(1, 3, 256, 256, device=self.device)
+            self.model(dummy)
 
     def _load_weights(self, weights_path: str):
         state_dict = torch.load(weights_path, map_location=self.device, weights_only=True)
-        # Strip 'module.' prefix from DataParallel
         cleaned = {}
         for k, v in state_dict.items():
             name = k[len("module."):] if k.startswith("module.") else k
             cleaned[name] = v
         self.model.load_state_dict(cleaned, strict=False)
 
+    def _get_priors(self, h, w):
+        """Cache priorbox per resolution — avoids recomputing every image."""
+        key = (h, w)
+        if key not in self._prior_cache:
+            priorbox = PriorBox(self.cfg, image_size=(h, w))
+            self._prior_cache[key] = priorbox.forward().to(self.device)
+        return self._prior_cache[key]
+
     @torch.no_grad()
     def detect(self, image: Image.Image) -> list[dict]:
-        """
-        Detect faces in a PIL Image.
-
-        Returns list of dicts with keys:
-            'bbox': (x1, y1, x2, y2) in original image coordinates
-            'confidence': float
-            'landmarks': list of 5 (x, y) tuples
-        """
         img_width, img_height = image.size
 
-        # Convert PIL RGB to numpy BGR (match original OpenCV-based training)
         img_np = np.array(image)[:, :, ::-1].astype(np.float32)
         img_np -= (104, 117, 123)
 
@@ -74,12 +79,9 @@ class RetinaFaceDetector:
 
         loc, conf, landms = self.model(img_tensor)
 
-        # Generate priors
-        priorbox = PriorBox(self.cfg, image_size=(img_height, img_width))
-        priors = priorbox.forward().to(self.device)
-        prior_data = priors.data
+        # Use cached priors
+        prior_data = self._get_priors(img_height, img_width)
 
-        # Decode
         boxes = decode(loc.data.squeeze(0), prior_data, self.cfg['variance'])
         boxes = boxes * scale
         boxes = boxes.cpu().numpy()
@@ -91,29 +93,24 @@ class RetinaFaceDetector:
         landms_decoded = landms_decoded * scale1
         landms_decoded = landms_decoded.cpu().numpy()
 
-        # Filter by confidence
         inds = np.where(scores > self.confidence_threshold)[0]
         boxes = boxes[inds]
         landms_decoded = landms_decoded[inds]
         scores = scores[inds]
 
-        # Keep top-K before NMS
         order = scores.argsort()[::-1][:self.top_k]
         boxes = boxes[order]
         landms_decoded = landms_decoded[order]
         scores = scores[order]
 
-        # NMS
         dets = np.hstack((boxes, scores[:, np.newaxis])).astype(np.float32, copy=False)
         keep = py_cpu_nms(dets, self.nms_threshold)
         dets = dets[keep, :]
         landms_decoded = landms_decoded[keep]
 
-        # Keep top-K after NMS
         dets = dets[:self.keep_top_k, :]
         landms_decoded = landms_decoded[:self.keep_top_k]
 
-        # Build results
         results = []
         for i in range(dets.shape[0]):
             if dets[i, 4] < self.vis_threshold:
@@ -142,18 +139,6 @@ class RetinaFaceDetector:
         margin: float = 0.20,
         max_faces: Optional[int] = None,
     ) -> list[Image.Image]:
-        """
-        Detect faces and return cropped PIL Images.
-
-        Args:
-            image: Input PIL Image
-            crop_size: Output size for each face crop
-            margin: Fraction to expand bbox (e.g., 0.20 = 20% expansion)
-            max_faces: Maximum number of faces to return (None = all)
-
-        Returns:
-            List of PIL Images, each crop_size x crop_size
-        """
         detections = self.detect(image)
         if max_faces is not None:
             detections = detections[:max_faces]
@@ -165,7 +150,6 @@ class RetinaFaceDetector:
             face_w = x2 - x1
             face_h = y2 - y1
 
-            # Expand bbox by margin
             dx = int(face_w * margin)
             dy = int(face_h * margin)
             x1 = max(0, x1 - dx)

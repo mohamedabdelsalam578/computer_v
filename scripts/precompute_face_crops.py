@@ -4,11 +4,7 @@ Pre-compute face crops for all GRAVEX-200K images using RetinaFace.
 Run AFTER download_data.py. This is required before training.
 
 Usage:
-    python scripts/precompute_face_crops.py [--split train] [--limit N]
-
-Output:
-    data_raw/face_crops/{split}/{class}/{hash}_{idx}.png
-    data_raw/manifests/{split}_with_faces.csv
+    python scripts/precompute_face_crops.py [--split train] [--limit N] [--workers 8]
 """
 import os
 import sys
@@ -20,49 +16,120 @@ from pathlib import Path
 from tqdm import tqdm
 from PIL import Image
 import torch
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing
 
-# Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from configs.base_config import ProjectConfig, DataConfig, RetinaFaceConfig
-from retinaface.detector import RetinaFaceDetector
+
+
+def process_batch(args):
+    """Worker function — each process runs its own detector instance."""
+    rows, crops_dir, split_name, done_map, weights_path, rf_cfg_dict, data_cfg_dict, device_str = args
+
+    # Import here so each worker process gets its own copy
+    from retinaface.detector import RetinaFaceDetector
+
+    detector = RetinaFaceDetector(
+        weights_path=weights_path,
+        device=device_str,
+        confidence_threshold=rf_cfg_dict['confidence_threshold'],
+        nms_threshold=rf_cfg_dict['nms_threshold'],
+        vis_threshold=rf_cfg_dict['vis_threshold'],
+        min_face_size=rf_cfg_dict['min_face_size'],
+    )
+
+    output_rows = []
+    for row in rows:
+        image_path = row['image_path']
+        label = row['label']
+        img_hash = hashlib.md5(image_path.encode()).hexdigest()[:12]
+        class_name = "real" if int(label) == 0 else "ai"
+        crop_save_dir = Path(crops_dir) / split_name / class_name
+        crop_save_dir.mkdir(parents=True, exist_ok=True)
+
+        if img_hash in done_map:
+            crop_paths = done_map[img_hash]
+            output_rows.append({
+                'image_path': image_path,
+                'label': label,
+                'num_faces': len(crop_paths),
+                'face_crop_paths': json.dumps(crop_paths),
+            })
+            continue
+
+        if not os.path.exists(image_path):
+            continue
+
+        try:
+            image = Image.open(image_path).convert('RGB')
+        except Exception:
+            continue
+
+        face_crops = detector.detect_faces(
+            image,
+            crop_size=data_cfg_dict['face_crop_size'],
+            margin=data_cfg_dict['face_margin'],
+            max_faces=5,
+        )
+
+        crop_paths = []
+        for idx, crop in enumerate(face_crops):
+            crop_filename = f"{img_hash}_{idx}.png"
+            crop_path = crop_save_dir / crop_filename
+            crop.save(str(crop_path))
+            crop_paths.append(str(crop_path))
+
+        output_rows.append({
+            'image_path': image_path,
+            'label': label,
+            'num_faces': len(face_crops),
+            'face_crop_paths': json.dumps(crop_paths),
+        })
+
+    return output_rows
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--split', type=str, default=None,
-                        help='Process only this split (train/val/test). Default: all.')
-    parser.add_argument('--limit', type=int, default=None,
-                        help='Max images per split (for testing)')
+    parser.add_argument('--split',   type=str, default=None)
+    parser.add_argument('--limit',   type=int, default=None)
+    parser.add_argument('--workers', type=int, default=None,
+                        help='Number of parallel workers (default: auto)')
     args = parser.parse_args()
 
-    cfg = ProjectConfig()
+    cfg     = ProjectConfig()
     data_cfg = DataConfig()
-    rf_cfg = RetinaFaceConfig()
+    rf_cfg  = RetinaFaceConfig()
 
-    # Load detector
-    print("Loading RetinaFace detector...")
+    # Auto-select device and workers
     if torch.cuda.is_available():
-        device = "cuda"
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        device = "mps"
+        device_str = "cuda"
+        # On GPU: use 1 worker per GPU with high CPU workers for I/O
+        default_workers = min(8, multiprocessing.cpu_count())
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        device_str = "mps"
+        default_workers = 4
     else:
-        device = "cpu"
-    detector = RetinaFaceDetector(
-        weights_path=str(cfg.retinaface_weights),
-        device=device,
-        confidence_threshold=rf_cfg.confidence_threshold,
-        nms_threshold=rf_cfg.nms_threshold,
-        vis_threshold=rf_cfg.vis_threshold,
-        min_face_size=rf_cfg.min_face_size,
-    )
-    print("Detector loaded.")
+        device_str = "cpu"
+        default_workers = min(8, multiprocessing.cpu_count())
+
+    num_workers = args.workers or default_workers
+    print(f"Device: {device_str} | Workers: {num_workers}")
 
     manifests_dir = cfg.data_raw / "manifests"
-    crops_dir = cfg.data_raw / "face_crops"
+    crops_dir     = cfg.data_raw / "face_crops"
     crops_dir.mkdir(parents=True, exist_ok=True)
 
     splits = [args.split] if args.split else ['train', 'val', 'test']
+
+    rf_cfg_dict   = {'confidence_threshold': rf_cfg.confidence_threshold,
+                     'nms_threshold': rf_cfg.nms_threshold,
+                     'vis_threshold': rf_cfg.vis_threshold,
+                     'min_face_size': rf_cfg.min_face_size}
+    data_cfg_dict = {'face_crop_size': data_cfg.face_crop_size,
+                     'face_margin': data_cfg.face_margin}
 
     for split_name in splits:
         manifest_path = manifests_dir / f"{split_name}.csv"
@@ -70,7 +137,6 @@ def main():
             print(f"Skipping {split_name}: {manifest_path} not found")
             continue
 
-        # Read manifest
         rows = []
         with open(manifest_path, 'r') as f:
             reader = csv.DictReader(f)
@@ -82,79 +148,50 @@ def main():
 
         print(f"Processing {split_name}: {len(rows)} images...")
 
-        # Build hash -> [crop_paths] map in ONE directory scan upfront.
-        # No per-image filesystem calls during the main loop.
-        done_map = {}  # hash12 -> [str(path), ...]
+        # Build done_map in one scan
+        done_map = {}
         for cn in ("real", "ai"):
             class_dir = crops_dir / split_name / cn
             if class_dir.exists():
                 for p in class_dir.iterdir():
                     h = p.stem.rsplit('_', 1)[0]
                     done_map.setdefault(h, []).append(str(p))
-        # Sort paths so face indices are in order
         for h in done_map:
             done_map[h].sort()
-        print(f"  {len(done_map)} images already have crops on disk — skipping RetinaFace for those")
+        print(f"  {len(done_map)} already cached — skipping those")
 
-        output_rows = []
-        for row in tqdm(rows, desc=f"Face crops [{split_name}]"):
-            image_path = row['image_path']
-            label = row['label']
-            img_hash = hashlib.md5(image_path.encode()).hexdigest()[:12]
-            class_name = "real" if int(label) == 0 else "ai"
-            crop_save_dir = crops_dir / split_name / class_name
-            crop_save_dir.mkdir(parents=True, exist_ok=True)
+        # Split rows into batches for each worker
+        chunk_size = max(1, len(rows) // num_workers)
+        chunks = [rows[i:i+chunk_size] for i in range(0, len(rows), chunk_size)]
 
-            # Pure in-memory lookup — zero filesystem calls
-            if img_hash in done_map:
-                crop_paths = done_map[img_hash]
-                output_rows.append({
-                    'image_path': image_path,
-                    'label': label,
-                    'num_faces': len(crop_paths),
-                    'face_crop_paths': json.dumps(crop_paths),
-                })
-                continue
+        all_output_rows = []
+        weights_path = str(cfg.retinaface_weights)
 
-            if not os.path.exists(image_path):
-                continue
+        # Use spawn context for CUDA compatibility
+        ctx = multiprocessing.get_context('spawn')
+        with ProcessPoolExecutor(max_workers=num_workers, mp_context=ctx) as executor:
+            futures = [
+                executor.submit(process_batch, (
+                    chunk, str(crops_dir), split_name, done_map,
+                    weights_path, rf_cfg_dict, data_cfg_dict, device_str
+                ))
+                for chunk in chunks
+            ]
+            with tqdm(total=len(rows), desc=f"Face crops [{split_name}]") as pbar:
+                for future in as_completed(futures):
+                    result = future.result()
+                    all_output_rows.extend(result)
+                    pbar.update(len(result))
 
-            try:
-                image = Image.open(image_path).convert('RGB')
-            except Exception:
-                continue
-
-            # Detect and crop faces
-            face_crops = detector.detect_faces(
-                image,
-                crop_size=data_cfg.face_crop_size,
-                margin=data_cfg.face_margin,
-                max_faces=5,
-            )
-
-            crop_paths = []
-            for idx, crop in enumerate(face_crops):
-                crop_filename = f"{img_hash}_{idx}.png"
-                crop_path = crop_save_dir / crop_filename
-                crop.save(str(crop_path))
-                crop_paths.append(str(crop_path))
-
-            output_rows.append({
-                'image_path': image_path,
-                'label': label,
-                'num_faces': len(face_crops),
-                'face_crop_paths': json.dumps(crop_paths),
-            })
-
-        # Write output manifest
+        # Write manifest
         output_path = manifests_dir / f"{split_name}_with_faces.csv"
         with open(output_path, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=['image_path', 'label', 'num_faces', 'face_crop_paths'])
             writer.writeheader()
-            writer.writerows(output_rows)
+            writer.writerows(all_output_rows)
 
-        n_with_faces = sum(1 for r in output_rows if r['num_faces'] > 0)
-        print(f"  {split_name}: {n_with_faces}/{len(output_rows)} images have faces")
+        n_with_faces = sum(1 for r in all_output_rows if int(r['num_faces']) > 0)
+        print(f"  {split_name}: {n_with_faces}/{len(all_output_rows)} images have faces → {output_path}")
 
 
 if __name__ == '__main__':
