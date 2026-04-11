@@ -39,7 +39,7 @@ if torch.cuda.is_available():
     ACCELERATOR = 'gpu'
     DEVICE_NAME = torch.cuda.get_device_name(0)
     PIN_MEMORY  = True
-    NUM_WORKERS = min(4, os.cpu_count() or 4)   # keep low — CLIP workers can deadlock
+    NUM_WORKERS = 0   # CLIP steps are ~2s each; workers cause semaphore deadlocks on RunPod
     # CLIP ViT-L/14 is ~307M params per branch → 614M total dual-branch
     # RTX 4090 (24GB): 606M dual-branch CLIP needs gradient checkpointing.
     # bs=16 + accum=8 = effective 128. Checkpointing saves ~60% activation memory.
