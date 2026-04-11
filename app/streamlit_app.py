@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import sys
 from pathlib import Path
 
@@ -134,6 +135,11 @@ for k, v in {
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
+
+if "clip_use_last_ckpt" not in st.session_state:
+    st.session_state.clip_use_last_ckpt = os.environ.get(
+        "AI_CV_CLIP_USE_LAST", ""
+    ).strip().lower() in ("1", "true", "yes", "on")
 
 _ck = _pipeline_cache_key()
 if st.session_state.get("_pipeline_ck_seen") != _ck:
@@ -337,9 +343,9 @@ FUTURISTIC_CSS = """
     background-clip: text;
     font-weight: 900;
 }
+/* Keep header visible: Streamlit puts the sidebar open/close control there. */
 #MainMenu { visibility: hidden; }
 footer { visibility: hidden; }
-header { visibility: hidden; }
 </style>
 """
 st.markdown(FUTURISTIC_CSS, unsafe_allow_html=True)
@@ -505,8 +511,6 @@ def comparison_table_html(results: dict, threshold: float) -> str:
 #  SIDEBAR
 # ═══════════════════════════════════════════════════════════════════
 
-catalog = pipeline_catalog()
-
 with st.sidebar:
     st.markdown(
         """
@@ -521,6 +525,40 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
     st.markdown('<div class="section-line"></div>', unsafe_allow_html=True)
+    st.checkbox(
+        "CLIP: prefer last.ckpt (while training)",
+        key="clip_use_last_ckpt",
+        help="Uses lightning_logs_clip/checkpoints/last.ckpt. Turn off after training to load the best "
+        "clip-*.ckpt by validation metric in the filename. After toggling, click **Reload pipelines**.",
+    )
+
+if st.session_state.clip_use_last_ckpt:
+    os.environ["AI_CV_CLIP_USE_LAST"] = "1"
+else:
+    os.environ.pop("AI_CV_CLIP_USE_LAST", None)
+
+catalog = pipeline_catalog()
+
+with st.sidebar:
+    st.markdown('<div class="section-line"></div>', unsafe_allow_html=True)
+
+    from configs.base_config import ProjectConfig
+
+    _proj_cfg = ProjectConfig()
+    _any_real_wait = any(
+        cfg.get("instance") is not None and not cfg["trained"] for cfg in catalog.values()
+    )
+    if _any_real_wait:
+        with st.expander("Where the app looks for checkpoints", expanded=True):
+            st.caption("Project root (set `PROJECT_ROOT` to override)")
+            st.code(str(_proj_cfg.project_root.resolve()), language=None)
+            st.caption(
+                "FerretNet: `lightning_logs/checkpoints/ferretnet-*.ckpt` or `last.ckpt`"
+            )
+            st.caption(
+                "CLIP: `weights/clip_finetuned.pt`, or `lightning_logs_clip/checkpoints/` "
+                "(`clip-*.ckpt` / `last.ckpt`). Use the checkbox above or `AI_CV_CLIP_USE_LAST=1` to prefer `last.ckpt`."
+            )
 
     st.markdown("#### Active pipelines")
     _wid = _sidebar_widget_id()
@@ -695,9 +733,10 @@ if st.session_state.processed_image is not None and st.session_state.results is 
             if not results:
                 if not any(p.is_available() for p in pipelines):
                     st.warning(
-                        "No checkpoints found for any pipeline. Set **PROJECT_ROOT** to your repo, "
-                        "ensure `lightning_logs/checkpoints/*.ckpt` and/or "
-                        "`lightning_logs_clip/checkpoints/*.ckpt` exist, then **Reload pipelines**."
+                        "No checkpoints found for any pipeline. Open the sidebar expander "
+                        "**Where the app looks for checkpoints** to see the resolved project root, "
+                        "then add weights under the paths shown (or set **PROJECT_ROOT**), and click "
+                        "**Reload pipelines**."
                     )
                 else:
                     st.warning(

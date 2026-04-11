@@ -24,7 +24,7 @@ def _find_weights(proj: ProjectConfig) -> Tuple[Optional[Path], str]:
     Resolution order:
       1. AI_CV_CLIP_CHECKPOINT — explicit .ckpt or .pt path (highest priority)
       2. weights/clip_finetuned.pt — exported bundle
-      3. If AI_CV_CLIP_USE_LAST=1: lightning_logs_clip/checkpoints/last.ckpt (in-flight training)
+      3. If AI_CV_CLIP_USE_LAST=1 (or Streamlit sidebar “prefer last.ckpt”): last.ckpt
       4. Best lightning_logs_clip/checkpoints/clip-*.ckpt by val_fused_acc in filename
       5. last.ckpt if nothing else matched
     """
