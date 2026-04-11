@@ -48,15 +48,15 @@ class DataConfig:
 @dataclass
 class TrainConfig:
     batch_size: int = 64
-    max_epochs: int = 15
-    learning_rate: float = 5e-5   # lower lr — pretrained weights are sensitive
-    betas: tuple = (0.937, 0.999)
-    weight_decay: float = 5e-4
-    warmup_epochs: int = 3
-    gradient_clip_val: float = 0.5  # tighter clip to prevent gradient explosion
+    max_epochs: int = 30
+    learning_rate: float = 1e-4   # back to standard fine-tuning lr
+    betas: tuple = (0.9, 0.999)
+    weight_decay: float = 1e-4
+    warmup_epochs: int = 2
+    gradient_clip_val: float = 1.0
     precision: str = "16-mixed"
     num_workers: int = 16
-    early_stopping_patience: int = 5
+    early_stopping_patience: int = 7
     face_loss_weight: float = 0.5
     full_loss_weight: float = 0.5
 

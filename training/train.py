@@ -128,8 +128,13 @@ def main():
 
     proj_cfg.results_dir.mkdir(parents=True, exist_ok=True)
 
+    # Explicit dirpath avoids double-nesting lightning_logs/lightning_logs/
+    ckpt_dir = proj_cfg.lightning_logs / "checkpoints"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+
     callbacks = [
         pl.callbacks.ModelCheckpoint(
+            dirpath=str(ckpt_dir),
             monitor='val_fused_acc',
             mode='max',
             save_top_k=3,
