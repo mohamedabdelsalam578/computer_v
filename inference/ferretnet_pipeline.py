@@ -71,7 +71,7 @@ class FerretNetPipeline(BasePipeline):
         try:
             self._load_model()
             t0 = time.time()
-            face_crops, face_boxes = detect_faces(image, crop_size=IMAGE_SIZE)
+            face_crops, face_boxes, face_det_scores = detect_faces(image, crop_size=IMAGE_SIZE)
 
             full_tensor = self._transform(image.resize((IMAGE_SIZE, IMAGE_SIZE))).unsqueeze(0).to(self._device)
 
@@ -105,6 +105,7 @@ class FerretNetPipeline(BasePipeline):
                 num_faces=len(face_crops),
                 face_crops=face_crops,
                 face_boxes=face_boxes,
+                face_detection_scores=face_det_scores,
                 processing_time=time.time() - t0,
             )
         except Exception as e:

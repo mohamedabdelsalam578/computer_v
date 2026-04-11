@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; overflow:hidden; background:transparent; font-family:system-ui,sans-serif; }
+  #canvas-container {
+    width:100%; height:100%; min-height:360px; position:relative;
+    border-radius:14px; overflow:hidden;
+    border:1px solid rgba(0,240,255,0.25);
+    box-shadow:0 0 32px rgba(0,240,255,0.12), inset 0 0 60px rgba(0,240,255,0.04);
+    background:radial-gradient(ellipse 80% 60% at 50% 40%, rgba(0,30,45,0.5) 0%, transparent 65%);
+  }
+  #canvas-container canvas { display:block; width:100% !important; height:100% !important; }
+  .overlay-text {
+    position:absolute; bottom:14px; left:50%; transform:translateX(-50%);
+    color:rgba(0,240,255,0.55); font-size:0.68rem; letter-spacing:0.2em;
+    text-transform:uppercase; pointer-events:none; font-weight:700;
+    text-shadow:0 0 12px rgba(0,240,255,0.4);
+  }
+  .hint-text {
+    position:absolute; top:10px; left:50%; transform:translateX(-50%);
+    color:rgba(148,163,184,0.85); font-size:0.65rem; letter-spacing:0.12em;
+    text-transform:uppercase; pointer-events:none; font-weight:600;
+  }
+  .scanline-overlay {
+    position:absolute; top:0; left:0; right:0; bottom:0; z-index:2;
+    background:repeating-linear-gradient(
+      0deg,transparent,transparent 2px,
+      rgba(0,240,255,0.018) 2px,rgba(0,240,255,0.018) 4px
+    );
+    pointer-events:none;
+  }
+  .vignette {
+    position:absolute; top:0; left:0; right:0; bottom:0; z-index:2;
+    background:radial-gradient(ellipse at center,transparent 45%,rgba(10,14,23,0.55) 100%);
+    pointer-events:none;
+  }
+  .corner-frame::before, .corner-frame::after {
+    content:''; position:absolute; width:20px; height:20px; z-index:3;
+    border-color:rgba(0,240,255,0.35); border-style:solid; pointer-events:none;
+  }
+  .corner-frame::before { top:8px; left:8px; border-width:2px 0 0 2px; border-radius:4px 0 0 0; }
+  .corner-frame::after { bottom:8px; right:8px; border-width:0 2px 2px 0; border-radius:0 0 4px 0; }
+</style>
+</head>
+<body>
+<div id="canvas-container" class="corner-frame">
+  <div class="hint-text" id="hint-text">Move cursor — assistant tracks you</div>
+  <div class="scanline-overlay"></div>
+  <div class="vignette"></div>
+  <div class="overlay-text" id="status-text">AWAITING INPUT</div>
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const container = document.getElementById('canvas-container');
+const statusText = document.getElementById('status-text');
+const hintText = document.getElementById('hint-text');
+const shouldWave = __SHOULD_WAVE__;
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x0a0e17, 0.075);
+
+const camera = new THREE.PerspectiveCamera(
+  50, container.clientWidth / Math.max(container.clientHeight, 1), 0.1, 100
+);
+camera.position.set(0, 1.25, 5.4);
+camera.lookAt(0, 0.55, 0);
+
+const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'high-performance' });
+renderer.setSize(container.clientWidth, Math.max(container.clientHeight, 1));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.25;
+container.insertBefore(renderer.domElement, container.firstChild);
+renderer.domElement.style.position = 'relative';
+renderer.domElement.style.zIndex = '1';
+
+scene.add(new THREE.AmbientLight(0x404060, 0.55));
+const cyanLight = new THREE.PointLight(0x00f0ff, 3.2, 28);
+cyanLight.position.set(3.2, 4.2, 3);
+scene.add(cyanLight);
+const purpleLight = new THREE.PointLight(0x7c3aed, 2.2, 22);
+purpleLight.position.set(-3.2, 3.2, -1);
+scene.add(purpleLight);
+const rimLight = new THREE.PointLight(0x00f0ff, 1.6, 16);
+rimLight.position.set(0, 2.2, -4);
+scene.add(rimLight);
+
+const bodyMat = new THREE.MeshPhongMaterial({
+  color: 0x1a1a2e, emissive: 0x00f0ff, emissiveIntensity: 0.09,
+  shininess: 90, specular: 0x00f0ff, transparent: true, opacity: 0.93,
+});
+const wireMat = new THREE.MeshBasicMaterial({
+  color: 0x00f0ff, wireframe: true, transparent: true, opacity: 0.14,
+});
+const eyeMat = new THREE.MeshPhongMaterial({
+  color: 0x00ff88, emissive: 0x00ff88, emissiveIntensity: 0.92,
+});
+const glowMat = new THREE.MeshPhongMaterial({
+  color: 0x00f0ff, emissive: 0x00f0ff, emissiveIntensity: 0.52,
+  transparent: true, opacity: 0.72,
+});
+const ringMat = new THREE.MeshPhongMaterial({
+  color: 0x00f0ff, emissive: 0x00f0ff, emissiveIntensity: 0.28,
+  transparent: true, opacity: 0.48,
+});
+const accentMat = new THREE.MeshPhongMaterial({
+  color: 0x7c3aed, emissive: 0x7c3aed, emissiveIntensity: 0.42,
+  transparent: true, opacity: 0.82,
+});
+
+const robot = new THREE.Group();
+scene.add(robot);
+
+const headGroup = new THREE.Group();
+headGroup.position.y = 1.65;
+const headGeo = new THREE.BoxGeometry(0.55, 0.45, 0.45);
+headGroup.add(new THREE.Mesh(headGeo, bodyMat));
+headGroup.add(new THREE.Mesh(headGeo, wireMat));
+const visorGeo = new THREE.BoxGeometry(0.5, 0.12, 0.02);
+const visorMat = new THREE.MeshPhongMaterial({
+  color: 0x00f0ff, emissive: 0x00f0ff, emissiveIntensity: 0.38,
+  transparent: true, opacity: 0.58,
+});
+const visor = new THREE.Mesh(visorGeo, visorMat);
+visor.position.set(0, 0.02, 0.235);
+headGroup.add(visor);
+const eyeGeo = new THREE.SphereGeometry(0.055, 14, 14);
+const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+leftEye.position.set(-0.13, 0.02, 0.24);
+headGroup.add(leftEye);
+const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+rightEye.position.set(0.13, 0.02, 0.24);
+headGroup.add(rightEye);
+const antStem = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.22, 6), bodyMat);
+antStem.position.y = 0.34;
+headGroup.add(antStem);
+const antTip = new THREE.Mesh(new THREE.SphereGeometry(0.04, 12, 12), glowMat);
+antTip.position.y = 0.47;
+headGroup.add(antTip);
+const earGeo = new THREE.BoxGeometry(0.04, 0.15, 0.1);
+const leftEar = new THREE.Mesh(earGeo, accentMat);
+leftEar.position.set(-0.3, 0, 0);
+headGroup.add(leftEar);
+const rightEar = new THREE.Mesh(earGeo, accentMat);
+rightEar.position.set(0.3, 0, 0);
+headGroup.add(rightEar);
+robot.add(headGroup);
+
+const neckMesh = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.1, 0.12, 0.15, 10), bodyMat
+);
+neckMesh.position.y = 1.35;
+robot.add(neckMesh);
+
+const bodyGroup = new THREE.Group();
+const bodyGeo = new THREE.OctahedronGeometry(0.55, 0);
+const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
+bodyMesh.scale.set(1, 1.3, 0.75);
+bodyGroup.add(bodyMesh);
+const bodyWire = new THREE.Mesh(bodyGeo, wireMat);
+bodyWire.scale.set(1, 1.3, 0.75);
+bodyGroup.add(bodyWire);
+const coreMesh = new THREE.Mesh(new THREE.SphereGeometry(0.18, 20, 20), glowMat);
+bodyGroup.add(coreMesh);
+const chestMesh = new THREE.Mesh(
+  new THREE.BoxGeometry(0.35, 0.08, 0.02),
+  new THREE.MeshPhongMaterial({
+    color: 0x00f0ff, emissive: 0x00f0ff, emissiveIntensity: 0.22,
+    transparent: true, opacity: 0.52,
+  })
+);
+chestMesh.position.set(0, 0.1, 0.42);
+bodyGroup.add(chestMesh);
+robot.add(bodyGroup);
+
+function createArm(isRight) {
+  const sign = isRight ? 1 : -1;
+  const shoulderGroup = new THREE.Group();
+  shoulderGroup.position.set(sign * 0.72, 0.35, 0);
+  shoulderGroup.add(new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 12), glowMat));
+  const upperArmGroup = new THREE.Group();
+  const upperMesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.05, 0.045, 0.45, 10), bodyMat
+  );
+  upperMesh.position.y = -0.25;
+  upperArmGroup.add(upperMesh);
+  const elbowGroup = new THREE.Group();
+  elbowGroup.position.y = -0.5;
+  elbowGroup.add(new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 10), glowMat));
+  const foreMesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.04, 0.035, 0.38, 10), bodyMat
+  );
+  foreMesh.position.y = -0.2;
+  elbowGroup.add(foreMesh);
+  const handMesh = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 10), glowMat);
+  handMesh.position.y = -0.42;
+  elbowGroup.add(handMesh);
+  upperArmGroup.add(elbowGroup);
+  shoulderGroup.add(upperArmGroup);
+  return { shoulderGroup, upperArmGroup, elbowGroup };
+}
+
+const rightArm = createArm(true);
+const leftArm = createArm(false);
+robot.add(rightArm.shoulderGroup);
+robot.add(leftArm.shoulderGroup);
+leftArm.shoulderGroup.rotation.z = 0.2;
+leftArm.elbowGroup.rotation.x = -0.15;
+
+const baseGroup = new THREE.Group();
+baseGroup.position.y = -0.95;
+const ring1 = new THREE.Mesh(
+  new THREE.TorusGeometry(0.72, 0.028, 16, 64), ringMat
+);
+ring1.rotation.x = Math.PI / 2;
+baseGroup.add(ring1);
+const ring2 = new THREE.Mesh(
+  new THREE.TorusGeometry(0.52, 0.016, 16, 48),
+  new THREE.MeshPhongMaterial({
+    color: 0x7c3aed, emissive: 0x7c3aed, emissiveIntensity: 0.22,
+    transparent: true, opacity: 0.38,
+  })
+);
+ring2.rotation.x = Math.PI / 2;
+baseGroup.add(ring2);
+robot.add(baseGroup);
+
+const orbGroup = new THREE.Group();
+orbGroup.position.y = -0.7;
+const orbData = [];
+for (let i = 0; i < 4; i++) {
+  const orbMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.038, 10, 10),
+    i % 2 === 0 ? glowMat.clone() : accentMat.clone()
+  );
+  orbData.push({
+    mesh: orbMesh, angle: (Math.PI * 2 / 4) * i,
+    radius: 0.55 + i * 0.08, speed: 1.2 + i * 0.35
+  });
+  orbGroup.add(orbMesh);
+}
+robot.add(orbGroup);
+
+const pCount = 300;
+const pGeo = new THREE.BufferGeometry();
+const pPos = new Float32Array(pCount * 3);
+const pVel = new Float32Array(pCount);
+for (let i = 0; i < pCount; i++) {
+  const angle = Math.random() * Math.PI * 2;
+  const r = 0.35 + Math.random() * 2;
+  pPos[i*3] = Math.cos(angle) * r;
+  pPos[i*3+1] = -1.6 + Math.random() * 4.2;
+  pPos[i*3+2] = Math.sin(angle) * r;
+  pVel[i] = 0.0022 + Math.random() * 0.007;
+}
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+const particles = new THREE.Points(pGeo, new THREE.PointsMaterial({
+  color: 0x00f0ff, size: 0.028, transparent: true, opacity: 0.55,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+}));
+scene.add(particles);
+
+const gridHelper = new THREE.GridHelper(18, 36, 0x00f0ff, 0x0a1e3a);
+gridHelper.position.y = -1.85;
+gridHelper.material.opacity = 0.22;
+gridHelper.material.transparent = true;
+scene.add(gridHelper);
+
+const disc = new THREE.Mesh(
+  new THREE.RingGeometry(0.01, 1.45, 64),
+  new THREE.MeshBasicMaterial({
+    color: 0x00f0ff, transparent: true, opacity: 0.035, side: THREE.DoubleSide,
+  })
+);
+disc.position.set(0, 0.48, -1.15);
+scene.add(disc);
+const discRing = new THREE.Mesh(
+  new THREE.RingGeometry(1.38, 1.46, 64),
+  new THREE.MeshBasicMaterial({
+    color: 0x00f0ff, transparent: true, opacity: 0.16, side: THREE.DoubleSide,
+  })
+);
+discRing.position.copy(disc.position);
+scene.add(discRing);
+
+let mouseX = 0, mouseY = 0;
+container.addEventListener('mousemove', (e) => {
+  const rect = container.getBoundingClientRect();
+  mouseX = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
+  mouseY = ((e.clientY - rect.top) / rect.height - 0.5) * 2;
+});
+container.addEventListener('mouseenter', () => {
+  hintText.style.opacity = '0.35';
+});
+container.addEventListener('mouseleave', () => {
+  hintText.style.opacity = '1';
+});
+
+if (shouldWave) {
+  statusText.textContent = 'ANALYZING INPUT';
+  statusText.style.color = 'rgba(0,255,160,0.75)';
+}
+
+const startTime = performance.now();
+let robotTargetZ = shouldWave ? -0.28 : -0.92;
+
+function animate() {
+  requestAnimationFrame(animate);
+  const now = performance.now();
+  const t = (now - startTime) / 1000;
+
+  robot.position.y = Math.sin(t * 1.5) * 0.09;
+  robotTargetZ = shouldWave ? -0.28 : -0.92;
+  robot.position.z += (robotTargetZ - robot.position.z) * 0.035;
+
+  const targetHeadY = mouseX * 0.42;
+  const targetHeadX = -mouseY * 0.24;
+  headGroup.rotation.y += (targetHeadY - headGroup.rotation.y) * 0.055;
+  headGroup.rotation.x += (targetHeadX - headGroup.rotation.x) * 0.055;
+
+  const targetBodyY = mouseX * 0.12;
+  bodyGroup.rotation.y += (targetBodyY - bodyGroup.rotation.y) * 0.028;
+  bodyMesh.rotation.y = Math.sin(t * 0.9) * 0.06;
+
+  const coreS = 1 + Math.sin(t * 3.1) * 0.13;
+  coreMesh.scale.set(coreS, coreS, coreS);
+  coreMesh.material.emissiveIntensity = 0.38 + Math.sin(t * 3.1) * 0.22;
+  leftEye.material.emissiveIntensity = 0.72 + Math.sin(t * 4.1) * 0.22;
+  rightEye.material.emissiveIntensity = 0.72 + Math.sin(t * 4.1) * 0.22;
+  antTip.material.emissiveIntensity = 0.38 + Math.sin(t * 5.1) * 0.32;
+  ring1.rotation.z = t * 0.65;
+  ring2.rotation.z = -t * 0.42;
+
+  orbData.forEach((od) => {
+    const a = od.angle + t * od.speed;
+    od.mesh.position.x = Math.cos(a) * od.radius;
+    od.mesh.position.z = Math.sin(a) * od.radius;
+    od.mesh.position.y = Math.sin(t * 2.1 + od.angle) * 0.09;
+  });
+
+  const posArr = particles.geometry.attributes.position.array;
+  for (let i = 0; i < pCount; i++) {
+    posArr[i*3+1] += pVel[i];
+    if (posArr[i*3+1] > 3.2) {
+      posArr[i*3+1] = -1.6;
+      const angle = Math.random() * Math.PI * 2;
+      const r = 0.35 + Math.random() * 2;
+      posArr[i*3] = Math.cos(angle) * r;
+      posArr[i*3+2] = Math.sin(angle) * r;
+    }
+  }
+  particles.geometry.attributes.position.needsUpdate = true;
+  particles.rotation.y = t * 0.055;
+  disc.rotation.z = t * 0.15;
+  disc.material.opacity = 0.025 + Math.sin(t * 2.1) * 0.012;
+  discRing.material.opacity = 0.11 + Math.sin(t * 2.6) * 0.055;
+
+  if (shouldWave) {
+    const waveT = t;
+    if (waveT < 0.85) {
+      robot.position.z += (-0.28 - robot.position.z) * 0.055;
+    } else if (waveT < 1.45) {
+      const p = (waveT - 0.85) / 0.6;
+      rightArm.shoulderGroup.rotation.z = 0.2 - p * 2.75;
+      rightArm.shoulderGroup.rotation.x = -p * 0.35;
+    } else {
+      rightArm.shoulderGroup.rotation.z = -2.55;
+      rightArm.shoulderGroup.rotation.x = -0.35;
+      const wt = waveT - 1.45;
+      rightArm.elbowGroup.rotation.z = Math.sin(wt * 7.5) * 0.52;
+      rightArm.elbowGroup.rotation.x = Math.sin(wt * 7.5 + 0.5) * 0.24;
+      coreMesh.material.emissiveIntensity = 0.55 + Math.sin(wt * 3.2) * 0.35;
+      leftEye.material.emissiveIntensity = 0.85 + Math.sin(wt * 5.2) * 0.2;
+      rightEye.material.emissiveIntensity = 0.85 + Math.sin(wt * 5.2) * 0.2;
+    }
+    leftArm.shoulderGroup.rotation.z = 0.2 + Math.sin(t * 1.2) * 0.06;
+  } else {
+    leftArm.shoulderGroup.rotation.z = 0.2 + Math.sin(t * 1.2) * 0.06;
+    rightArm.shoulderGroup.rotation.z = 0.2 - Math.sin(t * 1.2 + 1) * 0.06;
+  }
+
+  cyanLight.position.x = 3.2 + Math.sin(t * 0.42) * 1.1;
+  purpleLight.position.z = -1 + Math.cos(t * 0.62) * 1.6;
+  renderer.render(scene, camera);
+}
+animate();
+
+const ro = new ResizeObserver(entries => {
+  for (const entry of entries) {
+    const w = entry.contentRect.width;
+    const h = Math.max(entry.contentRect.height, 320);
+    if (w > 0 && h > 0) {
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    }
+  }
+});
+ro.observe(container);
+</script>
+</body>
+</html>

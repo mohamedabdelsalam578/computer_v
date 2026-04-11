@@ -35,17 +35,18 @@ def get_detector(weights_path: str = None, device: str = None):
 
 def detect_faces(image: Image.Image, crop_size: int = 224):
     """
-    Returns (face_crops, face_boxes).
-    If detector unavailable, returns ([], []) — pipelines fall back to full-image only.
+    Returns (face_crops, face_boxes, face_detection_scores).
+    If detector unavailable, returns three empty lists — pipelines fall back to full-image only.
     """
     detector = get_detector()
     if detector is None:
-        return [], []
+        return [], [], []
 
     try:
         detections = detector.detect(image)
-        boxes  = [d['bbox'] for d in detections]
-        crops  = detector.detect_faces(image, crop_size=crop_size)
-        return crops, boxes
+        boxes = [d["bbox"] for d in detections]
+        scores = [float(d["confidence"]) for d in detections]
+        crops = detector.detect_faces(image, crop_size=crop_size)
+        return crops, boxes, scores
     except Exception:
-        return [], []
+        return [], [], []

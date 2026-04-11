@@ -15,6 +15,7 @@ class PipelineResult:
     num_faces: int
     face_crops: list = field(default_factory=list)   # list of PIL Images
     face_boxes: list = field(default_factory=list)   # list of (x1,y1,x2,y2)
+    face_detection_scores: list = field(default_factory=list)  # RetinaFace conf per box
     processing_time: float = 0.0
     error: Optional[str] = None
 

@@ -1,5 +1,6 @@
-import time
 import glob
+import os
+import time
 from pathlib import Path
 from typing import Optional, Tuple
 from PIL import Image
@@ -19,23 +20,46 @@ IMAGE_SIZE = 224   # CLIP ViT-B/32 expects 224×224
 def _find_weights(proj: ProjectConfig) -> Tuple[Optional[Path], str]:
     """
     Returns (path, kind) where kind is 'pt' (exported) or 'ckpt' (Lightning).
-    Priority: exported weights/clip_finetuned.pt → best .ckpt → last.ckpt
+
+    Resolution order:
+      1. AI_CV_CLIP_CHECKPOINT — explicit .ckpt or .pt path (highest priority)
+      2. weights/clip_finetuned.pt — exported bundle
+      3. If AI_CV_CLIP_USE_LAST=1: lightning_logs_clip/checkpoints/last.ckpt (in-flight training)
+      4. Best lightning_logs_clip/checkpoints/clip-*.ckpt by val_fused_acc in filename
+      5. last.ckpt if nothing else matched
     """
-    # 1. Exported lightweight weights (preferred for Mac / download)
+    override = os.environ.get("AI_CV_CLIP_CHECKPOINT", "").strip()
+    if override:
+        p = Path(override).expanduser()
+        if p.is_file():
+            kind = "pt" if p.suffix.lower() == ".pt" else "ckpt"
+            return p, kind
+
     pt_path = proj.weights_dir / "clip_finetuned.pt"
     if pt_path.exists():
         return pt_path, "pt"
 
-    # 2. Lightning checkpoint (on RunPod after training)
     ckpt_dir = proj.project_root / "lightning_logs_clip" / "checkpoints"
-    if ckpt_dir.exists():
-        candidates = [p for p in glob.glob(str(ckpt_dir / "clip-*.ckpt")) if 'last' not in p]
-        if candidates:
-            best = Path(sorted(candidates, key=lambda p: p.split('=')[-1], reverse=True)[0])
-            return best, "ckpt"
-        last = ckpt_dir / "last.ckpt"
-        if last.exists():
-            return last, "ckpt"
+    if not ckpt_dir.exists():
+        return None, "none"
+
+    last = ckpt_dir / "last.ckpt"
+    use_last = os.environ.get("AI_CV_CLIP_USE_LAST", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+    if use_last and last.is_file():
+        return last, "ckpt"
+
+    candidates = [
+        p for p in glob.glob(str(ckpt_dir / "clip-*.ckpt"))
+        if "last" not in Path(p).name.lower()
+    ]
+    if candidates:
+        best = Path(sorted(candidates, key=lambda p: p.split("=")[-1], reverse=True)[0])
+        return best, "ckpt"
+
+    if last.is_file():
+        return last, "ckpt"
 
     return None, "none"
 
@@ -93,7 +117,7 @@ class CLIPPipeline(BasePipeline):
         try:
             self._load_model()
             t0 = time.time()
-            face_crops, face_boxes = detect_faces(image, crop_size=IMAGE_SIZE)
+            face_crops, face_boxes, face_det_scores = detect_faces(image, crop_size=IMAGE_SIZE)
 
             full_tensor = self._transform(image.resize((IMAGE_SIZE, IMAGE_SIZE))).unsqueeze(0).to(self._device)
 
@@ -131,6 +155,7 @@ class CLIPPipeline(BasePipeline):
                 num_faces=len(face_crops),
                 face_crops=face_crops,
                 face_boxes=face_boxes,
+                face_detection_scores=face_det_scores,
                 processing_time=time.time() - t0,
             )
         except Exception as e:
