@@ -2,9 +2,16 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Set PROJECT_ROOT env var to override on any machine (RunPod, Colab, etc.)
-# e.g.  export PROJECT_ROOT=/workspace/AI_COMPUTER_VISION
-_ROOT = Path(os.environ.get("PROJECT_ROOT", "/Users/MAC/Desktop/Projects/AI_COMPUTER_VISION"))
+# Override with PROJECT_ROOT on RunPod, Colab, etc. Otherwise infer repo root from this file
+# (…/configs/base_config.py → parent.parent), so Streamlit is not tied to a single machine path.
+def _default_project_root() -> Path:
+    env = os.environ.get("PROJECT_ROOT")
+    if env:
+        return Path(env).expanduser().resolve()
+    return Path(__file__).resolve().parent.parent
+
+
+_ROOT = _default_project_root()
 
 
 @dataclass
