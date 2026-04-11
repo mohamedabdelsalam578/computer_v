@@ -11,7 +11,7 @@ class CLIPDetectorLightning(pl.LightningModule):
 
     def __init__(
         self,
-        model_name: str = "openai/clip-vit-large-patch14",
+        model_name: str = "openai/clip-vit-base-patch32",
         train_config: TrainConfig = None,
         fusion_config: FusionConfig = None,
     ):

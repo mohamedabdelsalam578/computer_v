@@ -21,7 +21,7 @@ class CLIPDualBranchDetector(nn.Module):
 
     def __init__(
         self,
-        model_name: str = "openai/clip-vit-large-patch14",
+        model_name: str = "openai/clip-vit-base-patch32",
         fusion_config: FusionConfig = None,
     ):
         super().__init__()

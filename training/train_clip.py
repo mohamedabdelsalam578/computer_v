@@ -83,7 +83,7 @@ def main():
     parser = argparse.ArgumentParser(description="Fine-tune CLIP dual-branch AI detector")
     parser.add_argument('--resume',     type=str,   default=None,
                         help='Resume from Lightning checkpoint (full state).')
-    parser.add_argument('--model',      type=str,   default='ViT-L/14',
+    parser.add_argument('--model',      type=str,   default='ViT-B/32',
                         choices=list(MODEL_MAP.keys()))
     parser.add_argument('--batch_size', type=int,   default=None)
     parser.add_argument('--epochs',     type=int,   default=None)
