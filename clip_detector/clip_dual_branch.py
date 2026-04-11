@@ -29,7 +29,9 @@ class CLIPDualBranchDetector(nn.Module):
         self.fusion = fusion_config or FusionConfig()
 
         print(f"  Loading shared CLIP encoder: {model_name}")
-        self.encoder = CLIPVisionModel.from_pretrained(model_name)
+        # use_safetensors=True avoids torch.load CVE-2025-32434 check
+        # (safetensors format is safe regardless of torch version)
+        self.encoder = CLIPVisionModel.from_pretrained(model_name, use_safetensors=True)
         self.encoder.train()   # HuggingFace models can start with submodules in eval
 
         hidden_size = self.encoder.config.hidden_size  # ViT-L/14 → 1024
