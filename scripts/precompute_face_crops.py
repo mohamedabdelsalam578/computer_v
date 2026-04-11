@@ -76,9 +76,9 @@ def process_batch(args):
 
         crop_paths = []
         for idx, crop in enumerate(face_crops):
-            crop_filename = f"{img_hash}_{idx}.png"
+            crop_filename = f"{img_hash}_{idx}.jpg"
             crop_path = crop_save_dir / crop_filename
-            crop.save(str(crop_path))
+            crop.save(str(crop_path), 'JPEG', quality=95)
             crop_paths.append(str(crop_path))
 
         output_rows.append({
@@ -154,8 +154,9 @@ def main():
             class_dir = crops_dir / split_name / cn
             if class_dir.exists():
                 for p in class_dir.iterdir():
-                    h = p.stem.rsplit('_', 1)[0]
-                    done_map.setdefault(h, []).append(str(p))
+                    if p.suffix.lower() in ('.png', '.jpg', '.jpeg'):
+                        h = p.stem.rsplit('_', 1)[0]
+                        done_map.setdefault(h, []).append(str(p))
         for h in done_map:
             done_map[h].sort()
         print(f"  {len(done_map)} already cached — skipping those")
