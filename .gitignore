@@ -1,6 +1,8 @@
 # Data — too large for git (upload separately to HuggingFace/Drive)
 data_raw/
 lightning_logs/
+# CLIP training outputs (checkpoints ~1GB, logs) — copy separately; do not commit
+lightning_logs_clip/
 results/
 __pycache__/
 *.pyc
