@@ -39,6 +39,13 @@ class DualBranchFerretNet(nn.Module):
             state_dict = state_dict['model']
         model.load_state_dict(state_dict)
 
+        # Reinitialize classifier head: pretrained logit layer has bias ≈ -10
+        # which forces all predictions to "real". Fresh head starts at ~0.5
+        # probability, giving BCEWithLogitsLoss a ~0.69 starting point.
+        linear = model.logit[1]  # nn.Linear after Dropout
+        nn.init.xavier_uniform_(linear.weight)
+        nn.init.zeros_(linear.bias)
+
         return model
 
     def forward(self, face_crop, full_image):

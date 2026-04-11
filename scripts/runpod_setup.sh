@@ -35,10 +35,13 @@ pip install -q kagglehub tensorboard
 echo "=== [3/6] Download RetinaFace weights from Google Drive ==="
 mkdir -p weights/
 pip install -q gdown
-# Downloads Resnet50_Final.pth from your Google Drive folder
+# gdown --folder downloads into a subfolder named after the folder — move files up
 gdown --folder "https://drive.google.com/drive/folders/1gAeC7Vqaq8QlRDGAfcLa_Oho0uNzTMcH" \
-      --output weights/ --remaining-ok
-echo "Weights downloaded."
+      --output /tmp/gdrive_weights/ --remaining-ok
+# Move files from nested weights/weights/ to weights/
+find /tmp/gdrive_weights/ -name "*.pth" -exec mv {} weights/ \;
+echo "Weights downloaded:"
+ls -lh weights/
 
 echo "=== [3b/6] Verify GPU ==="
 python3 -c "

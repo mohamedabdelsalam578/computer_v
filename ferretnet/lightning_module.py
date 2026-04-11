@@ -89,6 +89,12 @@ class FerretNetLightning(pl.LightningModule):
         full_acc  = sum(self._val_full_correct)  / total
         fused_acc = sum(self._val_fused_correct) / total
 
+        # Store as attributes so callbacks can read them directly
+        # (self.log may not propagate to callback_metrics in time)
+        self._last_face_acc = face_acc
+        self._last_full_acc = full_acc
+        self._last_fused_acc = fused_acc
+
         self.log('val_face_acc',  face_acc,  prog_bar=False)
         self.log('val_full_acc',  full_acc,  prog_bar=False)
         self.log('val_fused_acc', fused_acc, prog_bar=True)
