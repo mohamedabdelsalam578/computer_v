@@ -159,7 +159,7 @@ def main():
         precision=train_cfg.precision,       # '16-mixed' on all hardware
         accumulate_grad_batches=ACCUM,
         callbacks=callbacks,
-        default_root_dir=str(proj_cfg.lightning_logs),
+        default_root_dir=str(proj_cfg.project_root),
         log_every_n_steps=50,
         benchmark=(ACCELERATOR == 'gpu'),    # cuDNN benchmark only on CUDA
     )
