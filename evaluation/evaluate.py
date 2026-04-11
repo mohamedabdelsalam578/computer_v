@@ -217,8 +217,11 @@ def main():
     print(f"\nResults saved to {output_dir}")
 
 
-def print_metrics(m):
+def print_metrics(m, threshold: float = 0.5):
     print(f"  Accuracy:  {m['accuracy']:.4f}")
+    print(f"  Precision: {m['precision']:.4f}  (AI class, τ={threshold})")
+    print(f"  Recall:    {m['recall']:.4f}")
+    print(f"  F1:        {m['f1']:.4f}")
     print(f"  AUC-ROC:   {m['auc_roc']:.4f}")
     print(f"  AP:        {m['average_precision']:.4f}")
     print(f"  EER:       {m['eer']:.4f} (threshold={m['eer_threshold']:.4f})")

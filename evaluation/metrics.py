@@ -2,6 +2,7 @@ import numpy as np
 from sklearn.metrics import (
     accuracy_score, roc_auc_score, average_precision_score,
     confusion_matrix, classification_report, roc_curve,
+    precision_score, recall_score, f1_score,
 )
 
 
@@ -21,6 +22,9 @@ def compute_metrics(y_true, y_scores, threshold=0.5):
 
     # Basic metrics
     acc = accuracy_score(y_true, y_pred)
+    prec = precision_score(y_true, y_pred, zero_division=0)
+    rec = recall_score(y_true, y_pred, zero_division=0)
+    f1 = f1_score(y_true, y_pred, zero_division=0)
     cm = confusion_matrix(y_true, y_pred)
     report = classification_report(y_true, y_pred, target_names=['Real', 'AI'])
 
@@ -42,6 +46,9 @@ def compute_metrics(y_true, y_scores, threshold=0.5):
 
     return {
         'accuracy': acc,
+        'precision': prec,
+        'recall': rec,
+        'f1': f1,
         'auc_roc': auc_roc,
         'average_precision': ap,
         'eer': eer,
