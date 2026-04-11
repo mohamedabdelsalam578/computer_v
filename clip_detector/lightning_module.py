@@ -31,6 +31,18 @@ class CLIPDetectorLightning(pl.LightningModule):
     def forward(self, face_crop, full_image):
         return self.model(face_crop, full_image)
 
+    # Gradient checkpointing is only safe during training (forward+backward).
+    # Disable it for validation/sanity-check to prevent CPU autocast deadlock.
+    def on_validation_model_eval(self):
+        super().on_validation_model_eval()
+        self.model.face_encoder.gradient_checkpointing_disable()
+        self.model.full_encoder.gradient_checkpointing_disable()
+
+    def on_validation_model_train(self):
+        super().on_validation_model_train()
+        self.model.face_encoder.gradient_checkpointing_enable()
+        self.model.full_encoder.gradient_checkpointing_enable()
+
     def training_step(self, batch, batch_idx):
         face_crops, full_images, labels = batch
         labels = labels.float().unsqueeze(1)

@@ -190,6 +190,7 @@ def main():
         default_root_dir=str(proj_cfg.project_root),
         log_every_n_steps=50,
         benchmark=(ACCELERATOR == 'gpu'),
+        num_sanity_val_steps=0,   # skip sanity check — gradient checkpointing + eval deadlocks
     )
 
     eff_bs = train_cfg.batch_size * ACCUM
