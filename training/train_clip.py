@@ -39,12 +39,11 @@ if torch.cuda.is_available():
     ACCELERATOR = 'gpu'
     DEVICE_NAME = torch.cuda.get_device_name(0)
     PIN_MEMORY  = True
-    NUM_WORKERS = 0   # CLIP steps are ~2s each; workers cause semaphore deadlocks on RunPod
-    # CLIP ViT-L/14 is ~307M params per branch → 614M total dual-branch
-    # RTX 4090 (24GB): 606M dual-branch CLIP needs gradient checkpointing.
-    # bs=16 + accum=8 = effective 128. Checkpointing saves ~60% activation memory.
-    BATCH_SIZE  = 16
-    ACCUM       = 8                # effective bs = 128
+    NUM_WORKERS = 0    # GPU is the bottleneck; workers cause semaphore issues on RunPod
+    # Shared encoder (307M) — NO gradient checkpointing needed.
+    # bs=64 sends 128 images (face+full stacked) per encoder pass.
+    BATCH_SIZE  = 64
+    ACCUM       = 2                # effective bs = 128
     torch.set_float32_matmul_precision('high')
 elif torch.backends.mps.is_available():
     ACCELERATOR = 'mps'

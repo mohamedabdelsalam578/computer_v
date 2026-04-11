@@ -19,10 +19,8 @@ class CLIPDetectorLightning(pl.LightningModule):
         self.save_hyperparameters()
         self.train_cfg = train_config or TrainConfig()
         self.criterion = nn.BCEWithLogitsLoss()
-
         self.model = CLIPDualBranchDetector(model_name, fusion_config)
 
-        # Buffers for epoch-level val metrics
         self._val_face_correct  = []
         self._val_full_correct  = []
         self._val_fused_correct = []
@@ -31,24 +29,11 @@ class CLIPDetectorLightning(pl.LightningModule):
     def forward(self, face_crop, full_image):
         return self.model(face_crop, full_image)
 
-    # Gradient checkpointing is only safe during training (forward+backward).
-    # Disable it for validation/sanity-check to prevent CPU autocast deadlock.
-    def on_validation_model_eval(self):
-        super().on_validation_model_eval()
-        self.model.face_encoder.gradient_checkpointing_disable()
-        self.model.full_encoder.gradient_checkpointing_disable()
-
-    def on_validation_model_train(self):
-        super().on_validation_model_train()
-        self.model.face_encoder.gradient_checkpointing_enable()
-        self.model.full_encoder.gradient_checkpointing_enable()
-
     def training_step(self, batch, batch_idx):
         face_crops, full_images, labels = batch
         labels = labels.float().unsqueeze(1)
 
         face_logits, full_logits = self.model(face_crops, full_images)
-
         loss = (self.train_cfg.face_loss_weight * self.criterion(face_logits, labels)
                 + self.train_cfg.full_loss_weight * self.criterion(full_logits, labels))
 
@@ -60,7 +45,6 @@ class CLIPDetectorLightning(pl.LightningModule):
         labels = labels.float().unsqueeze(1)
 
         face_logits, full_logits = self.model(face_crops, full_images)
-
         loss = (self.train_cfg.face_loss_weight * self.criterion(face_logits, labels)
                 + self.train_cfg.full_loss_weight * self.criterion(full_logits, labels))
 
@@ -73,8 +57,8 @@ class CLIPDetectorLightning(pl.LightningModule):
                        + self.model.fusion.full_weight * full_probs)
         fused_preds = (fused_probs > 0.5).long()
 
-        self._val_face_correct.append((face_preds == labels_long).sum().item())
-        self._val_full_correct.append((full_preds == labels_long).sum().item())
+        self._val_face_correct.append((face_preds  == labels_long).sum().item())
+        self._val_full_correct.append((full_preds  == labels_long).sum().item())
         self._val_fused_correct.append((fused_preds == labels_long).sum().item())
         self._val_total.append(labels_long.numel())
 
@@ -90,7 +74,6 @@ class CLIPDetectorLightning(pl.LightningModule):
         full_acc  = sum(self._val_full_correct)  / total
         fused_acc = sum(self._val_fused_correct) / total
 
-        # Store as attributes for direct access by ValMetricsCSV callback
         self._last_face_acc  = face_acc
         self._last_full_acc  = full_acc
         self._last_fused_acc = fused_acc
@@ -105,8 +88,8 @@ class CLIPDetectorLightning(pl.LightningModule):
         self._val_total.clear()
 
     def configure_optimizers(self):
-        # CLIP encoders: very low lr to preserve rich pretrained vision features
-        # Classification heads: full lr — fresh init, needs fast adaptation
+        # Shared encoder: very low lr to preserve CLIP's rich pretrained features
+        # Two heads: full lr — fresh xavier init, need fast adaptation
         encoder_params = [p for n, p in self.model.named_parameters()
                           if 'head' not in n]
         head_params    = [p for n, p in self.model.named_parameters()
@@ -119,10 +102,8 @@ class CLIPDetectorLightning(pl.LightningModule):
             ],
             weight_decay=self.train_cfg.weight_decay,
         )
-
         warmup = torch.optim.lr_scheduler.LinearLR(
-            optimizer,
-            start_factor=0.01,
+            optimizer, start_factor=0.01,
             total_iters=self.train_cfg.warmup_epochs,
         )
         cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -131,8 +112,7 @@ class CLIPDetectorLightning(pl.LightningModule):
             eta_min=1e-7,
         )
         scheduler = torch.optim.lr_scheduler.SequentialLR(
-            optimizer,
-            schedulers=[warmup, cosine],
+            optimizer, schedulers=[warmup, cosine],
             milestones=[self.train_cfg.warmup_epochs],
         )
         return {
