@@ -1,8 +1,10 @@
 """
-Evaluate a trained FerretNet checkpoint on the test set.
+Evaluate on a split manifest (face + full + fused metrics).
 
 Usage:
-    python evaluation/evaluate.py --checkpoint path/to/last.ckpt
+    python evaluation/evaluate.py --checkpoint path/to/best.ckpt
+    python evaluation/evaluate.py --pretrained_pth weights/ferretnet-b-median-3.pth \\
+        --manifest data_raw/manifests/test_with_faces.csv
 """
 import os
 
@@ -16,13 +18,21 @@ for _k, _v in (
     os.environ.setdefault(_k, _v)
 
 import argparse
+from pathlib import Path
+
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from PIL import Image
 
-from configs.base_config import ProjectConfig, DataConfig, FusionConfig
+from configs.base_config import (
+    ProjectConfig,
+    DataConfig,
+    FusionConfig,
+    FerretNetConfig,
+    TrainConfig,
+)
 from data.transforms import get_val_transforms
 from data.dual_branch_dataset import DualBranchDataset
 from ferretnet.lightning_module import FerretNetLightning
@@ -34,10 +44,55 @@ import matplotlib.pyplot as plt
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--checkpoint', type=str, required=True)
-    parser.add_argument('--output_dir', type=str, default=None)
+    parser = argparse.ArgumentParser(
+        description="Evaluate dual-branch FerretNet on a *_with_faces.csv manifest.",
+    )
+    src = parser.add_mutually_exclusive_group(required=True)
+    src.add_argument(
+        "--checkpoint",
+        type=str,
+        help="Lightning .ckpt from training (fine-tuned weights).",
+    )
+    src.add_argument(
+        "--pretrained_pth",
+        type=str,
+        help="Raw ferretnet-b-median-3.pth only: backbone + reinit head (same as train init, not fine-tuned).",
+    )
+    parser.add_argument(
+        "--manifest",
+        type=str,
+        default=None,
+        help="Path to test_with_faces.csv (default: data_raw/manifests/test_with_faces.csv under PROJECT_ROOT).",
+    )
+    parser.add_argument(
+        "--remap_from",
+        type=str,
+        default=None,
+        help="If CSV paths point elsewhere (e.g. RunPod), prefix to replace (e.g. /workspace/AI_COMPUTER_VISION).",
+    )
+    parser.add_argument(
+        "--remap_to",
+        type=str,
+        default=None,
+        help="Local prefix (e.g. /Users/you/.../AI_COMPUTER_VISION); use with --remap_from.",
+    )
+    parser.add_argument("--output_dir", type=str, default=None)
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=32,
+        help="Eval batch size (lower if MPS OOM).",
+    )
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=2,
+        help="DataLoader workers on Mac; use 0 if multiprocessing issues.",
+    )
     args = parser.parse_args()
+
+    if (args.remap_from is None) ^ (args.remap_to is None):
+        parser.error("Use both --remap_from and --remap_to, or neither.")
 
     cfg = ProjectConfig()
     data_cfg = DataConfig()
@@ -51,17 +106,26 @@ def main():
     else:
         device = torch.device("cpu")
 
-    # Load model
-    print(f"Loading checkpoint: {args.checkpoint}")
-    model = FerretNetLightning.load_from_checkpoint(
-        args.checkpoint,
-        weights_only=False,  # PyTorch 2.6+ safe unpickle for Lightning hparams in .ckpt
-    )
+    if args.checkpoint:
+        print(f"Loading checkpoint: {args.checkpoint}")
+        model = FerretNetLightning.load_from_checkpoint(
+            args.checkpoint,
+            weights_only=False,
+        )
+    else:
+        pth = Path(args.pretrained_pth).expanduser().resolve()
+        print(f"Loading pretrained weights (no fine-tune ckpt): {pth}")
+        model = FerretNetLightning(
+            ferretnet_config=FerretNetConfig(),
+            train_config=TrainConfig(),
+            fusion_config=FusionConfig(),
+            pretrained_path=str(pth),
+        )
     model.eval()
     model.to(device)
 
-    # Load test dataset
-    manifest = str(cfg.data_raw / "manifests" / "test_with_faces.csv")
+    manifest = args.manifest or str(cfg.data_raw / "manifests" / "test_with_faces.csv")
+    manifest = str(Path(manifest).expanduser().resolve())
     transform = get_val_transforms(data_cfg.full_image_size)
     test_dataset = DualBranchDataset(
         manifest_csv=manifest,
@@ -69,8 +133,15 @@ def main():
         full_transform=transform,
         face_size=data_cfg.face_crop_size,
         random_face_select=False,
+        path_prefix_override=args.remap_to,
+        original_prefix=args.remap_from,
     )
-    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, num_workers=2)
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
 
     # Run evaluation
     all_labels = []
