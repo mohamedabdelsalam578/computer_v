@@ -77,6 +77,20 @@ class EvalDataset(Dataset):
 
 # ── Evaluation ──────────────────────────────────────────────────────────────────
 
+def _get_image_features(model, images):
+    """Extract and L2-normalize image features, works across transformers versions."""
+    out = model.vision_model(pixel_values=images).pooler_output
+    out = model.visual_projection(out)
+    return out / out.norm(dim=-1, keepdim=True)
+
+
+def _get_text_features(model, tokens):
+    """Extract and L2-normalize text features, works across transformers versions."""
+    out = model.text_model(**tokens).pooler_output
+    out = model.text_projection(out)
+    return out / out.norm(dim=-1, keepdim=True)
+
+
 def evaluate_zero_shot(model, processor_transform, data_loader, text_features, device):
     """Compute zero-shot accuracy: cosine similarity to text prompts."""
     model.eval()
@@ -87,8 +101,7 @@ def evaluate_zero_shot(model, processor_transform, data_loader, text_features, d
         for images, labels in tqdm(data_loader, desc="  evaluating", leave=False):
             images = images.to(device)
 
-            image_features = model.get_image_features(pixel_values=images)
-            image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+            image_features = _get_image_features(model, images)
 
             # Similarity to [real_text, ai_text] — shape (B, 2)
             logits = (100.0 * image_features @ text_features.T)
@@ -167,8 +180,7 @@ def main():
         tokens       = tokenizer([real_txt, ai_txt],
                                  return_tensors='pt', padding=True).to(device)
         with torch.no_grad():
-            text_feats = clip_model.get_text_features(**tokens)
-            text_feats = text_feats / text_feats.norm(dim=-1, keepdim=True)
+            text_feats = _get_text_features(clip_model, tokens)
 
         acc, real_acc, ai_acc, bal_acc = evaluate_zero_shot(
             clip_model, transform, dataloader, text_feats, device
