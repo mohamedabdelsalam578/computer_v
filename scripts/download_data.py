@@ -39,6 +39,111 @@ def _download_dataset_kaggle_cli(dataset_slug: str, dest_dir: Path) -> None:
         raise RuntimeError(f"kaggle CLI exit {proc.returncode}: {tail}")
 
 
+def _gravex_image_roots(raw_dir: Path) -> list[Path]:
+    """Unzipped Kaggle bundle often nests images under a single folder."""
+    roots: list[Path] = []
+    for name in ("my_real_vs_ai_dataset", "dataset", "data"):
+        p = raw_dir / name
+        if p.is_dir():
+            roots.append(p)
+    roots.append(raw_dir)
+    return roots
+
+
+def _resolve_gravex_image_path(raw_dir: Path, rel: str) -> Path:
+    rel = rel.strip().strip('"').replace("\\", "/")
+    p = Path(rel)
+    if p.is_absolute():
+        return p.resolve()
+    for root in _gravex_image_roots(raw_dir):
+        cand = (root / rel).resolve()
+        if cand.is_file():
+            return cand
+    return (_gravex_image_roots(raw_dir)[0] / rel).resolve()
+
+
+def _parse_label_cell(val: str, col_lower: str) -> int:
+    """Return 0=real, 1=AI to match training BCE."""
+    s = str(val).strip().lower()
+    if s in ("real", "authentic", "genuine", "0", "neg", "negative"):
+        return 0
+    if s in ("ai", "fake", "synthetic", "generated", "1", "pos", "positive"):
+        return 1
+    n = int(float(val))
+    if col_lower in ("is_real", "real_label", "is_authentic"):
+        return 1 - n
+    return n
+
+
+def _row_path_and_label_keys(fieldnames: list[str]) -> tuple[str | None, str | None]:
+    path_key = None
+    label_key = None
+    lower_map = {k: k.lower() for k in fieldnames}
+    inv = {v: k for k, v in lower_map.items()}
+    for cand in (
+        "image_path",
+        "filepath",
+        "path",
+        "filename",
+        "image",
+        "file_name",
+        "img_path",
+        "file",
+    ):
+        if cand in inv:
+            path_key = inv[cand]
+            break
+    if path_key is None and fieldnames:
+        path_key = fieldnames[0]
+    for cand in ("label", "labels", "target", "class", "y", "is_ai", "is_real", "ai", "fake"):
+        if cand in inv:
+            label_key = inv[cand]
+            break
+    return path_key, label_key
+
+
+def load_samples_from_official_label_csvs(raw_dir: Path) -> dict[str, list[tuple[str, int]]] | None:
+    """
+    Kaggle bundle: train_labels.csv, val_labels.csv, test_labels.csv next to image tree.
+    If any split file is missing, return None (caller falls back to folder scan).
+    """
+    samples: dict[str, list[tuple[str, int]]] = {}
+    for split in ("train", "val", "test"):
+        fp = raw_dir / f"{split}_labels.csv"
+        if not fp.is_file():
+            return None
+        rows: list[tuple[str, int]] = []
+        with open(fp, newline="", encoding="utf-8", errors="replace") as f:
+            reader = csv.DictReader(f)
+            if not reader.fieldnames:
+                return None
+            pk, lk = _row_path_and_label_keys(list(reader.fieldnames))
+            if pk is None or lk is None:
+                print(f"  Could not detect path/label columns in {fp.name}: {reader.fieldnames}", file=sys.stderr)
+                return None
+            lk_low = lk.lower()
+            for row in reader:
+                if not row.get(pk):
+                    continue
+                abs_path = _resolve_gravex_image_path(raw_dir, row[pk])
+                try:
+                    lab = _parse_label_cell(row[lk], lk_low)
+                except (TypeError, ValueError):
+                    continue
+                rows.append((str(abs_path), lab))
+        if not rows:
+            return None
+        samples[split] = rows
+    # Log detected schema from train file (same columns expected on val/test)
+    _tr = raw_dir / "train_labels.csv"
+    with open(_tr, newline="", encoding="utf-8", errors="replace") as f:
+        r = csv.DictReader(f)
+        if r.fieldnames:
+            pk, lk = _row_path_and_label_keys(list(r.fieldnames))
+            print(f"  Label CSV columns: path={pk!r}, label={lk!r}")
+    return samples
+
+
 def _delete_kagglehub_archives(dataset_slug: str) -> int:
     """Remove *.archive under kagglehub cache so the next hub download cannot resume from a bad partial file."""
     parts = dataset_slug.split("/", 1)
@@ -75,6 +180,11 @@ def main():
         "--fresh-hub",
         action="store_true",
         help="Before kagglehub download, delete any *.archive for this dataset in ~/.cache/kagglehub (avoids broken resume).",
+    )
+    parser.add_argument(
+        "--ignore-official-csv",
+        action="store_true",
+        help="Do not use train_labels.csv/val_labels.csv/test_labels.csv even if present (old folder-scan / random-split behavior).",
     )
     args = parser.parse_args()
 
@@ -140,23 +250,39 @@ def main():
         print(f"Data already exists at {raw_dir}")
 
     # Discover structure and generate manifests
-    print("Scanning dataset structure...")
     splits_dir = cfg.data_raw / "manifests"
     splits_dir.mkdir(parents=True, exist_ok=True)
 
-    samples = defaultdict(list)  # split_name -> [(path, label)]
+    samples: dict[str, list[tuple[str, int]]] = defaultdict(list)
+
+    if not args.ignore_official_csv:
+        official = load_samples_from_official_label_csvs(raw_dir)
+        if official is not None:
+            samples = official
+            print(
+                "Using official train_labels.csv / val_labels.csv / test_labels.csv "
+                f"(train={len(samples['train'])}, val={len(samples['val'])}, test={len(samples['test'])})."
+            )
+        else:
+            print("No complete official *labels.csv trio; scanning folders (or random split)...")
+    else:
+        print("Ignoring official *labels.csv (--ignore-official-csv); scanning folders...")
+
+    if not samples:
+        print("Scanning dataset structure...")
 
     # Try pre-split structure first: train/val/test subdirs
-    for split_name in ["train", "val", "test"]:
-        split_path = raw_dir / split_name
-        if split_path.exists() and split_path.is_dir():
-            for class_dir in sorted(split_path.iterdir()):
-                if not class_dir.is_dir():
-                    continue
-                label = 0 if class_dir.name.lower() in ("real", "0") else 1
-                for img_path in sorted(class_dir.rglob("*")):
-                    if img_path.suffix.lower() in (".jpg", ".jpeg", ".png", ".bmp"):
-                        samples[split_name].append((str(img_path), label))
+    if not samples:
+        for split_name in ["train", "val", "test"]:
+            split_path = raw_dir / split_name
+            if split_path.exists() and split_path.is_dir():
+                for class_dir in sorted(split_path.iterdir()):
+                    if not class_dir.is_dir():
+                        continue
+                    label = 0 if class_dir.name.lower() in ("real", "0") else 1
+                    for img_path in sorted(class_dir.rglob("*")):
+                        if img_path.suffix.lower() in (".jpg", ".jpeg", ".png", ".bmp"):
+                            samples[split_name].append((str(img_path), label))
 
     # If no pre-split structure, scan for class folders at any depth
     if not samples:
