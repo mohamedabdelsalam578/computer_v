@@ -18,7 +18,10 @@ for _k, _v in (
     os.environ.setdefault(_k, _v)
 
 import argparse
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import torch
