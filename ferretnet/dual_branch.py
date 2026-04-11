@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+from typing import Optional
+
 from ferretnet.ferret import Ferret
 from ferretnet.lpd import get_lpd_dict
 from configs.base_config import FusionConfig
@@ -15,16 +17,21 @@ class DualBranchFerretNet(nn.Module):
     Fusion: 0.6 * max(face_scores) + 0.4 * full_score
     """
 
-    def __init__(self, pretrained_path: str, fusion_config: FusionConfig = None):
+    def __init__(self, pretrained_path: Optional[str] = None, fusion_config: FusionConfig = None):
         super().__init__()
         self.lpd_dict = get_lpd_dict()
         self.fusion = fusion_config or FusionConfig()
 
-        self.face_net = self._load_pretrained(pretrained_path)
-        self.full_net = self._load_pretrained(pretrained_path)
+        if pretrained_path:
+            self.face_net = self._load_pretrained(pretrained_path)
+            self.full_net = self._load_pretrained(pretrained_path)
+        else:
+            # Lightning load_from_checkpoint: hparams omit pretrained_path; weights come from ckpt state_dict.
+            self.face_net = self._fresh_ferret()
+            self.full_net = self._fresh_ferret()
 
-    def _load_pretrained(self, path: str) -> Ferret:
-        model = Ferret(
+    def _fresh_ferret(self) -> Ferret:
+        return Ferret(
             in_channels=3,
             num_classes=1,
             dim=96,
@@ -33,6 +40,9 @@ class DualBranchFerretNet(nn.Module):
             window_size=3,
             lpd_dict=self.lpd_dict,
         )
+
+    def _load_pretrained(self, path: str) -> Ferret:
+        model = self._fresh_ferret()
         state_dict = torch.load(path, map_location='cpu', weights_only=True)
         # Weights may be nested under 'model' key
         if isinstance(state_dict, dict) and 'model' in state_dict:

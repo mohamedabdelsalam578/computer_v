@@ -21,10 +21,8 @@ class FerretNetLightning(pl.LightningModule):
         self.train_cfg = train_config
         self.criterion = nn.BCEWithLogitsLoss()
 
-        if pretrained_path:
-            self.model = DualBranchFerretNet(pretrained_path, fusion_config)
-        else:
-            raise ValueError("pretrained_path is required for fine-tuning")
+        # pretrained_path None: Lightning load_from_checkpoint (path omitted from saved hparams).
+        self.model = DualBranchFerretNet(pretrained_path, fusion_config)
 
         # Buffers for epoch-level val metrics (accurate across all batches)
         self._val_face_correct = []
