@@ -42,19 +42,24 @@ class FerretNetPipeline(BasePipeline):
         ])
         self._device = ("cuda" if torch.cuda.is_available() else
                         "mps"  if torch.backends.mps.is_available() else "cpu")
-        self._ckpt_path = _get_best_ckpt(
-            ProjectConfig().lightning_logs / "checkpoints"
-        )
+
+    def _resolved_ckpt(self) -> Optional[Path]:
+        """Resolve on every call so @st.cache_resource + new checkpoints still work."""
+        return _get_best_ckpt(ProjectConfig().lightning_logs / "checkpoints")
 
     def is_available(self) -> bool:
-        return self._ckpt_path is not None and self._ckpt_path.exists()
+        p = self._resolved_ckpt()
+        return p is not None and p.exists()
 
     def _load_model(self):
         if self._model is not None:
             return
+        ckpt = self._resolved_ckpt()
+        if ckpt is None or not ckpt.exists():
+            return
         from ferretnet.lightning_module import FerretNetLightning
         self._model = FerretNetLightning.load_from_checkpoint(
-            str(self._ckpt_path),
+            str(ckpt),
             map_location=self._device,
             weights_only=False,
         )

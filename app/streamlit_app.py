@@ -45,6 +45,30 @@ def _sidebar_widget_id() -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
 
+def _pipeline_instances_for_inference(
+    active_names: list[str],
+    all_pipelines: list,
+    by_name: dict,
+) -> list:
+    """
+    Run pipelines checked in the sidebar; if none are checked (or none available),
+    fall back to every available registered pipeline so uploads still analyze.
+    """
+    chosen = []
+    seen = set()
+    for n in active_names:
+        p = by_name.get(n)
+        if p is not None and p.is_available() and p.name not in seen:
+            chosen.append(p)
+            seen.add(p.name)
+    if not chosen:
+        for p in all_pipelines:
+            if p.is_available() and p.name not in seen:
+                chosen.append(p)
+                seen.add(p.name)
+    return chosen
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  PAGE & PIPELINES
 # ═══════════════════════════════════════════════════════════════════
@@ -507,11 +531,12 @@ with st.sidebar:
         # Fresh defaults when widget id changes (WAIT→READY or after Reload); Streamlit ignores
         # `value=` once a key exists, so keys must include _wid.
         default_on = enabled and name in _DEFAULT_SIDEBAR_PIPELINES
+        _nk = hashlib.sha256(name.encode("utf-8")).hexdigest()[:10]
         checked = st.checkbox(
             f"[{tag}]  {name}",
             value=default_on,
             disabled=not enabled,
-            key=f"chk_{name}_{_wid}",
+            key=f"chk_{_nk}_{_wid}",
         )
         if checked and enabled:
             active.append(name)
@@ -601,11 +626,11 @@ if uploaded_file is not None:
     file_key = f"{uploaded_file.name}:{uploaded_file.size}"
     if st.session_state.get("processed_file_key") != file_key:
         image = Image.open(uploaded_file).convert("RGB")
-        selected = [
-            name_to_pipeline[n]
-            for n in st.session_state.active_pipelines
-            if n in name_to_pipeline and name_to_pipeline[n].is_available()
-        ]
+        selected = _pipeline_instances_for_inference(
+            st.session_state.active_pipelines,
+            pipelines,
+            name_to_pipeline,
+        )
         with st.spinner("Running RetinaFace + model inference…"):
             results = {}
             viz_boxes, viz_scores = None, None
@@ -668,11 +693,17 @@ if st.session_state.processed_image is not None and st.session_state.results is 
 
         if not ok_results:
             if not results:
-                st.warning(
-                    "No pipeline ran. In the sidebar, enable **[READY]** FerretNet and/or CLIP, "
-                    "then click **Reload pipelines** if you added checkpoints after starting the app, "
-                    "and upload the image again (or **Clear analysis** first)."
-                )
+                if not any(p.is_available() for p in pipelines):
+                    st.warning(
+                        "No checkpoints found for any pipeline. Set **PROJECT_ROOT** to your repo, "
+                        "ensure `lightning_logs/checkpoints/*.ckpt` and/or "
+                        "`lightning_logs_clip/checkpoints/*.ckpt` exist, then **Reload pipelines**."
+                    )
+                else:
+                    st.warning(
+                        "Inference did not run. Click **Clear analysis**, then upload again "
+                        "(sidebar checkboxes are optional — all **[READY]** models run by default)."
+                    )
             else:
                 st.warning(
                     "No successful runs — every selected pipeline failed (see warnings above). "

@@ -77,20 +77,26 @@ class CLIPPipeline(BasePipeline):
         ])
         self._device = ("cuda" if torch.cuda.is_available() else
                         "mps"  if torch.backends.mps.is_available() else "cpu")
-        proj = ProjectConfig()
-        self._ckpt_path, self._ckpt_kind = _find_weights(proj)
+
+    def _resolved_weights(self) -> Tuple[Optional[Path], str]:
+        """Resolve on every call (env + disk) so Streamlit cache never pins stale paths."""
+        return _find_weights(ProjectConfig())
 
     def is_available(self) -> bool:
-        return self._ckpt_path is not None and self._ckpt_path.exists()
+        path, _ = self._resolved_weights()
+        return path is not None and path.exists()
 
     def _load_model(self):
         if self._model is not None:
             return
+        ckpt_path, ckpt_kind = self._resolved_weights()
+        if ckpt_path is None or not ckpt_path.exists():
+            return
         from clip_detector.lightning_module import CLIPDetectorLightning
 
-        if self._ckpt_kind == "pt":
+        if ckpt_kind == "pt":
             # Exported weights — load state_dict directly (no optimizer state)
-            checkpoint = torch.load(str(self._ckpt_path), map_location=self._device,
+            checkpoint = torch.load(str(ckpt_path), map_location=self._device,
                                     weights_only=False)
             hparams = checkpoint.get("hyper_parameters", {})
             model_name = hparams.get("model_name", "openai/clip-vit-base-patch32")
@@ -100,7 +106,7 @@ class CLIPPipeline(BasePipeline):
         else:
             # Full Lightning checkpoint (RunPod)
             self._model = CLIPDetectorLightning.load_from_checkpoint(
-                str(self._ckpt_path),
+                str(ckpt_path),
                 map_location=self._device,
                 weights_only=False,
             )
