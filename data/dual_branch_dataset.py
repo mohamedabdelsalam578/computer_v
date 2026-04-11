@@ -63,18 +63,18 @@ class DualBranchDataset(Dataset):
             full_tensor = torch.zeros(3, self.face_size, self.face_size)
 
         # Load face crop
+        face_tensor = torch.zeros(3, self.face_size, self.face_size)
         if face_crop_paths:
             if self.random_face_select:
                 crop_path = random.choice(face_crop_paths)
             else:
                 crop_path = face_crop_paths[0]
-            face_image = Image.open(crop_path).convert('RGB')
-            if self.face_transform:
-                face_tensor = self.face_transform(face_image)
-            else:
-                face_tensor = torch.zeros(3, self.face_size, self.face_size)
-        else:
-            # No face detected — use black placeholder
-            face_tensor = torch.zeros(3, self.face_size, self.face_size)
+            try:
+                face_image = Image.open(crop_path).convert('RGB')
+                if self.face_transform:
+                    face_tensor = self.face_transform(face_image)
+            except Exception:
+                # Corrupted crop — use black placeholder
+                pass
 
         return face_tensor, full_tensor, label
