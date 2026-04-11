@@ -103,18 +103,11 @@ def main():
     data_cfg = DataConfig()
     rf_cfg  = RetinaFaceConfig()
 
-    # Auto-select device and workers
-    if torch.cuda.is_available():
-        device_str = "cuda"
-        # On GPU: use 1 worker per GPU with high CPU workers for I/O
-        default_workers = min(8, multiprocessing.cpu_count())
-    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-        device_str = "mps"
-        default_workers = 4
-    else:
-        device_str = "cpu"
-        default_workers = min(8, multiprocessing.cpu_count())
-
+    # RetinaFace workers always use CPU — CUDA cannot be shared across processes
+    # (CUDA context cannot be forked/spawned safely with multiprocessing)
+    # The RTX 4090 will be fully used during training instead.
+    device_str = "cpu"
+    default_workers = min(8, multiprocessing.cpu_count())
     num_workers = args.workers or default_workers
     print(f"Device: {device_str} | Workers: {num_workers}")
 
