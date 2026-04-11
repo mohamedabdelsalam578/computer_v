@@ -97,6 +97,20 @@ def main():
     if (args.remap_from is None) ^ (args.remap_to is None):
         parser.error("Use both --remap_from and --remap_to, or neither.")
 
+    if args.checkpoint:
+        _ck = Path(args.checkpoint).expanduser()
+        if not _ck.is_file():
+            parser.error(
+                f"Checkpoint not found: {_ck.resolve()}\n"
+                "  Pass the real .ckpt path (not a placeholder). Examples:\n"
+                "    --checkpoint lightning_logs/checkpoints/last.ckpt\n"
+                "    --checkpoint ~/Downloads/ferretnet-epoch=10-val_fused_acc=0.6100.ckpt"
+            )
+    else:
+        _pw = Path(args.pretrained_pth).expanduser()
+        if not _pw.is_file():
+            parser.error(f"Pretrained file not found: {_pw.resolve()}")
+
     cfg = ProjectConfig()
     data_cfg = DataConfig()
     output_dir = args.output_dir or str(cfg.results_dir / "evaluation")
@@ -129,6 +143,8 @@ def main():
 
     manifest = args.manifest or str(cfg.data_raw / "manifests" / "test_with_faces.csv")
     manifest = str(Path(manifest).expanduser().resolve())
+    if not Path(manifest).is_file():
+        parser.error(f"Manifest not found: {manifest}")
     transform = get_val_transforms(data_cfg.full_image_size)
     test_dataset = DualBranchDataset(
         manifest_csv=manifest,
