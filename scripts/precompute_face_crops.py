@@ -103,11 +103,15 @@ def main():
     data_cfg = DataConfig()
     rf_cfg  = RetinaFaceConfig()
 
-    # RetinaFace workers always use CPU — CUDA cannot be shared across processes
-    # (CUDA context cannot be forked/spawned safely with multiprocessing)
-    # The RTX 4090 will be fully used during training instead.
-    device_str = "cpu"
-    default_workers = min(8, multiprocessing.cpu_count())
+    if torch.cuda.is_available():
+        device_str = "cuda"
+        default_workers = 1   # single process owns the CUDA context
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        device_str = "mps"
+        default_workers = 1
+    else:
+        device_str = "cpu"
+        default_workers = min(8, multiprocessing.cpu_count())
     num_workers = args.workers or default_workers
     print(f"Device: {device_str} | Workers: {num_workers}")
 
@@ -161,21 +165,66 @@ def main():
         all_output_rows = []
         weights_path = str(cfg.retinaface_weights)
 
-        # Use spawn context for CUDA compatibility
-        ctx = multiprocessing.get_context('spawn')
-        with ProcessPoolExecutor(max_workers=num_workers, mp_context=ctx) as executor:
-            futures = [
-                executor.submit(process_batch, (
-                    chunk, str(crops_dir), split_name, done_map,
-                    weights_path, rf_cfg_dict, data_cfg_dict, device_str
-                ))
-                for chunk in chunks
-            ]
-            with tqdm(total=len(rows), desc=f"Face crops [{split_name}]") as pbar:
-                for future in as_completed(futures):
-                    result = future.result()
-                    all_output_rows.extend(result)
-                    pbar.update(len(result))
+        if num_workers == 1:
+            # Single process with CUDA — load detector once in main process
+            from retinaface.detector import RetinaFaceDetector
+            detector = RetinaFaceDetector(
+                weights_path=weights_path, device=device_str,
+                **rf_cfg_dict,
+            )
+            for row in tqdm(rows, desc=f"Face crops [{split_name}]"):
+                image_path = row['image_path']
+                label = row['label']
+                img_hash = hashlib.md5(image_path.encode()).hexdigest()[:12]
+                class_name = "real" if int(label) == 0 else "ai"
+                crop_save_dir = crops_dir / split_name / class_name
+                crop_save_dir.mkdir(parents=True, exist_ok=True)
+
+                if img_hash in done_map:
+                    all_output_rows.append({
+                        'image_path': image_path, 'label': label,
+                        'num_faces': len(done_map[img_hash]),
+                        'face_crop_paths': json.dumps(done_map[img_hash]),
+                    })
+                    continue
+
+                if not os.path.exists(image_path):
+                    continue
+                try:
+                    image = Image.open(image_path).convert('RGB')
+                except Exception:
+                    continue
+
+                face_crops = detector.detect_faces(
+                    image, crop_size=data_cfg_dict['face_crop_size'],
+                    margin=data_cfg_dict['face_margin'], max_faces=5,
+                )
+                crop_paths = []
+                for idx, crop in enumerate(face_crops):
+                    crop_path = crop_save_dir / f"{img_hash}_{idx}.jpg"
+                    crop.save(str(crop_path), 'JPEG', quality=95)
+                    crop_paths.append(str(crop_path))
+                all_output_rows.append({
+                    'image_path': image_path, 'label': label,
+                    'num_faces': len(face_crops),
+                    'face_crop_paths': json.dumps(crop_paths),
+                })
+        else:
+            # Multi-process — CPU only
+            ctx = multiprocessing.get_context('spawn')
+            with ProcessPoolExecutor(max_workers=num_workers, mp_context=ctx) as executor:
+                futures = [
+                    executor.submit(process_batch, (
+                        chunk, str(crops_dir), split_name, done_map,
+                        weights_path, rf_cfg_dict, data_cfg_dict, device_str
+                    ))
+                    for chunk in chunks
+                ]
+                with tqdm(total=len(rows), desc=f"Face crops [{split_name}]") as pbar:
+                    for future in as_completed(futures):
+                        result = future.result()
+                        all_output_rows.extend(result)
+                        pbar.update(len(result)))
 
         # Write manifest
         output_path = manifests_dir / f"{split_name}_with_faces.csv"
