@@ -138,13 +138,16 @@ def main():
     )
 
     _persist = train_cfg.num_workers > 0
-    _prefetch = (4 if ACCELERATOR == "gpu" else 2) if _persist else None
+    _resuming = bool(args.resume)
+    # After ckpt restore, persistent worker processes can deadlock with Lightning/CUDA; disable on resume.
+    _persistent_ok = _persist and not _resuming
+    _prefetch = (4 if ACCELERATOR == "gpu" else 2) if _persistent_ok else (2 if _persist else None)
     train_loader = DataLoader(
         train_dataset,
         batch_size=train_cfg.batch_size,
         shuffle=True,
         num_workers=train_cfg.num_workers,
-        persistent_workers=_persist,
+        persistent_workers=_persistent_ok,
         prefetch_factor=_prefetch,
         drop_last=True,
         pin_memory=PIN_MEMORY,
@@ -154,7 +157,7 @@ def main():
         batch_size=train_cfg.batch_size * 2,
         shuffle=False,
         num_workers=train_cfg.num_workers,
-        persistent_workers=_persist,
+        persistent_workers=_persistent_ok,
         prefetch_factor=_prefetch,
         pin_memory=PIN_MEMORY,
     )
@@ -218,6 +221,8 @@ def main():
     print(f"  Max epochs:      {train_cfg.max_epochs}  (patience={train_cfg.early_stopping_patience})")
     print(f"  Checkpoints:     {ckpt_dir.resolve()}")
     print(f"  Val metrics CSV: {(proj_cfg.results_dir / 'val_metrics_clip.csv').resolve()}")
+    if _resuming:
+        print("  Resume:          persistent_workers=OFF (avoids post-restore dataloader freezes)")
     print(f"{'='*60}\n")
 
     trainer.fit(
