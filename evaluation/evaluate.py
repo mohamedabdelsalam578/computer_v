@@ -34,11 +34,18 @@ def main():
     import os
     os.makedirs(output_dir, exist_ok=True)
 
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+
     # Load model
     print(f"Loading checkpoint: {args.checkpoint}")
     model = FerretNetLightning.load_from_checkpoint(args.checkpoint)
     model.eval()
-    model.to('mps')
+    model.to(device)
 
     # Load test dataset
     manifest = str(cfg.data_raw / "manifests" / "test_with_faces.csv")
@@ -62,8 +69,8 @@ def main():
 
     with torch.no_grad():
         for face_crops, full_images, labels in tqdm(test_loader, desc="Evaluating"):
-            face_crops = face_crops.to('mps')
-            full_images = full_images.to('mps')
+            face_crops = face_crops.to(device)
+            full_images = full_images.to(device)
 
             face_logits, full_logits = model.model(face_crops, full_images)
             face_probs = torch.sigmoid(face_logits).squeeze(1).cpu().numpy()

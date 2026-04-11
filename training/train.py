@@ -5,12 +5,14 @@ Auto-detects hardware: CUDA (RunPod) → MPS (Mac) → CPU fallback.
 
 Usage:
     python training/train.py
-    python training/train.py --resume lightning_logs/version_0/checkpoints/last.ckpt
+    python training/train.py --resume lightning_logs/checkpoints/last.ckpt
+    python training/train.py --resume_weights_only lightning_logs/checkpoints/last.ckpt --lr 3e-4
     python training/train.py --batch_size 128 --epochs 15
 """
 import os
 import sys
 import argparse
+import warnings
 import torch
 import torch.multiprocessing as mp
 import pytorch_lightning as pl
@@ -55,14 +57,29 @@ from data.dual_branch_dataset import DualBranchDataset
 from ferretnet.lightning_module import FerretNetLightning
 from training.callbacks import ValMetricsCSV
 
+# PyTorch Lightning + torch: internal pytree deprecation (harmless for training).
+for _warn_cat in (FutureWarning, DeprecationWarning, UserWarning):
+    warnings.filterwarnings(
+        "ignore",
+        message=r".*(LeafSpec|TreeSpec).*(deprecated|is_leaf).*",
+        category=_warn_cat,
+    )
+
 
 def main():
     parser = argparse.ArgumentParser(description="Fine-tune DualBranchFerretNet")
-    parser.add_argument('--resume',     type=str,   default=None)
-    parser.add_argument('--batch_size', type=int,   default=None)
-    parser.add_argument('--epochs',     type=int,   default=None)
-    parser.add_argument('--lr',         type=float, default=None)
+    parser.add_argument('--resume', type=str, default=None,
+                        help='Full resume: weights + optimizer + scheduler + epoch counter.')
+    parser.add_argument('--resume_weights_only', type=str, default=None,
+                        help='Load only model weights from a Lightning .ckpt; new optimizer/LR/schedule '
+                             '(use after editing TrainConfig or --lr). Epoch starts at 0.')
+    parser.add_argument('--batch_size', type=int, default=None)
+    parser.add_argument('--epochs', type=int, default=None)
+    parser.add_argument('--lr', type=float, default=None)
     args = parser.parse_args()
+
+    if args.resume and args.resume_weights_only:
+        parser.error('Use either --resume or --resume_weights_only, not both.')
 
     # spawn required for MPS; also safe for CUDA
     mp.set_start_method('spawn', force=True)
@@ -97,6 +114,7 @@ def main():
         face_transform=val_transform,
         full_transform=val_transform,
         face_size=data_cfg.face_crop_size,
+        random_face_select=False,  # stable val metrics; train keeps random multi-face sampling
     )
 
     train_loader = DataLoader(
@@ -125,6 +143,19 @@ def main():
         fusion_config=fusion_cfg,
         pretrained_path=str(proj_cfg.ferretnet_weights),
     )
+
+    ckpt_path_fit = args.resume
+    if args.resume_weights_only:
+        ckpt = torch.load(args.resume_weights_only, map_location='cpu', weights_only=False)
+        if 'state_dict' not in ckpt:
+            parser.error(f"Not a Lightning checkpoint: {args.resume_weights_only}")
+        model.load_state_dict(ckpt['state_dict'], strict=True)
+        ckpt_path_fit = None
+        print(
+            f"Loaded weights only from {args.resume_weights_only} — "
+            f"optimizer/scheduler reset; training starts at epoch 0 with current config.\n",
+            flush=True,
+        )
 
     proj_cfg.results_dir.mkdir(parents=True, exist_ok=True)
 
@@ -176,9 +207,18 @@ def main():
     print(f"  Train samples:   {len(train_dataset):,}")
     print(f"  Val samples:     {len(val_dataset):,}")
     print(f"  Max epochs:      {train_cfg.max_epochs}  (early stop patience={train_cfg.early_stopping_patience})")
+    print(f"  Checkpoints:     {ckpt_dir.resolve()}")
+    print(f"  Val metrics CSV: {(proj_cfg.results_dir / 'val_metrics.csv').resolve()}")
+    print(f"  PROJECT_ROOT:    {proj_cfg.project_root.resolve()}")
+    print(f"{'='*60}")
+    if train_cfg.precision == "16-mixed":
+        print(
+            "  Note: Lightning's model summary prints param size using FP32 math;\n"
+            "        forward/backward on GPU still use true mixed precision (16-mixed)."
+        )
     print(f"{'='*60}\n")
 
-    trainer.fit(model, train_loader, val_loader, ckpt_path=args.resume)
+    trainer.fit(model, train_loader, val_loader, ckpt_path=ckpt_path_fit)
 
 
 if __name__ == '__main__':
