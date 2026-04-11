@@ -4,6 +4,17 @@ Evaluate a trained FerretNet checkpoint on the test set.
 Usage:
     python evaluation/evaluate.py --checkpoint path/to/last.ckpt
 """
+import os
+
+for _k, _v in (
+    ("OMP_NUM_THREADS", "1"),
+    ("MKL_NUM_THREADS", "1"),
+    ("OPENBLAS_NUM_THREADS", "1"),
+    ("NUMEXPR_NUM_THREADS", "1"),
+    ("VECLIB_MAXIMUM_THREADS", "1"),
+):
+    os.environ.setdefault(_k, _v)
+
 import argparse
 import numpy as np
 import torch
@@ -31,7 +42,6 @@ def main():
     cfg = ProjectConfig()
     data_cfg = DataConfig()
     output_dir = args.output_dir or str(cfg.results_dir / "evaluation")
-    import os
     os.makedirs(output_dir, exist_ok=True)
 
     if torch.cuda.is_available():

@@ -10,6 +10,28 @@ Usage:
     python training/train.py --batch_size 128 --epochs 15
 """
 import os
+
+# RunPod / Docker: each DataLoader worker + SciPy/OpenBLAS defaults can spawn 64+ threads
+# and hit RLIMIT_NPROC ("Resource temporarily unavailable"). Cap BLAS/OMP before torch/scipy.
+for _k, _v in (
+    ("OMP_NUM_THREADS", "1"),
+    ("MKL_NUM_THREADS", "1"),
+    ("OPENBLAS_NUM_THREADS", "1"),
+    ("NUMEXPR_NUM_THREADS", "1"),
+    ("VECLIB_MAXIMUM_THREADS", "1"),
+):
+    os.environ.setdefault(_k, _v)
+
+
+def _num_dataloader_workers(default: int) -> int:
+    """Cap workers; set AI_CV_NUM_WORKERS=4 on tight RunPod containers if needed."""
+    cpu = os.cpu_count() or 1
+    base = min(default, cpu)
+    if "AI_CV_NUM_WORKERS" in os.environ:
+        base = int(os.environ["AI_CV_NUM_WORKERS"])
+    return max(0, min(base, cpu))
+
+
 import sys
 import argparse
 import warnings
@@ -26,7 +48,7 @@ if torch.cuda.is_available():
     ACCELERATOR   = 'gpu'
     DEVICE_NAME   = torch.cuda.get_device_name(0)
     PIN_MEMORY    = True       # CUDA benefits from pinned memory
-    NUM_WORKERS   = min(16, os.cpu_count())
+    NUM_WORKERS   = _num_dataloader_workers(16)
     BATCH_SIZE    = 64         # RTX 4090 max for dual-branch (12.5GB/23GB)
     ACCUM         = 2          # effective bs=128 via gradient accumulation
     torch.set_float32_matmul_precision('high')  # TF32 on CUDA
@@ -34,7 +56,7 @@ elif torch.backends.mps.is_available():
     ACCELERATOR   = 'mps'
     DEVICE_NAME   = 'Apple MPS'
     PIN_MEMORY    = False      # unified memory — pinning is a no-op
-    NUM_WORKERS   = 8          # 8 of 10 logical cores
+    NUM_WORKERS   = _num_dataloader_workers(8)
     BATCH_SIZE    = 64         # fits in 24 GB with accum
     ACCUM         = 2          # effective batch = 128
     os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.0'
@@ -44,7 +66,7 @@ else:
     ACCELERATOR   = 'cpu'
     DEVICE_NAME   = 'CPU'
     PIN_MEMORY    = False
-    NUM_WORKERS   = 4
+    NUM_WORKERS   = _num_dataloader_workers(4)
     BATCH_SIZE    = 16
     ACCUM         = 4
 # ──────────────────────────────────────────────────────────────────────────────
