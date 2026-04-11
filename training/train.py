@@ -25,8 +25,8 @@ if torch.cuda.is_available():
     DEVICE_NAME   = torch.cuda.get_device_name(0)
     PIN_MEMORY    = True       # CUDA benefits from pinned memory
     NUM_WORKERS   = min(16, os.cpu_count())
-    BATCH_SIZE    = 128        # RTX 4090 / A100 handles large batches
-    ACCUM         = 1          # no need to accumulate on powerful GPUs
+    BATCH_SIZE    = 64         # RTX 4090 max for dual-branch (12.5GB/23GB)
+    ACCUM         = 2          # effective bs=128 via gradient accumulation
     torch.set_float32_matmul_precision('high')  # TF32 on CUDA
 elif torch.backends.mps.is_available():
     ACCELERATOR   = 'mps'

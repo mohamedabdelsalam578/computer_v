@@ -55,7 +55,7 @@ class TrainConfig:
     warmup_epochs: int = 2
     gradient_clip_val: float = 1.0
     precision: str = "16-mixed"
-    num_workers: int = 8
+    num_workers: int = 16      # 128 CPU cores on RunPod — use 16 for I/O
     early_stopping_patience: int = 5
     face_loss_weight: float = 0.5
     full_loss_weight: float = 0.5
