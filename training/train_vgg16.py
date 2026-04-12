@@ -9,7 +9,8 @@ VGG16 dual-branch (ImageNet pretrained, 14.7M encoder params):
 Usage:
     python training/train_vgg16.py
     python training/train_vgg16.py --resume lightning_logs_vgg16/checkpoints/last.ckpt
-    python training/train_vgg16.py --epochs 25 --lr 1e-4
+    python training/train_vgg16.py --resume_weights_only lightning_logs_vgg16/checkpoints/last.ckpt
+    python training/train_vgg16.py --epochs 20 --lr 1e-4
     python training/train_vgg16.py --batch_size 256 --num_workers 16
 """
 import os
@@ -75,12 +76,24 @@ VGG_IMAGE_SIZE = 224   # VGG16 standard input size
 
 def main():
     parser = argparse.ArgumentParser(description="Fine-tune VGG16 dual-branch AI detector")
-    parser.add_argument('--resume',      type=str,   default=None,
-                        help='Resume from Lightning checkpoint.')
+    parser.add_argument('--resume', type=str, default=None,
+                        help='Full resume: weights + optimizer + scheduler + epoch.')
+    parser.add_argument(
+        '--resume_weights_only',
+        type=str,
+        default=None,
+        help='Load only model weights; fresh optimizer/LR (epoch 0). Use if full --resume fails '
+             '(e.g. optimizer param groups changed).',
+    )
     parser.add_argument('--batch_size',  type=int,   default=None)
     parser.add_argument('--accum_grad_batches', type=int, default=None)
     parser.add_argument('--num_workers', type=int,   default=None)
-    parser.add_argument('--epochs',      type=int,   default=None)
+    parser.add_argument(
+        '--epochs',
+        type=int,
+        default=15,
+        help='Maximum training epochs (default 15).',
+    )
     parser.add_argument('--lr',          type=float, default=None)
     parser.add_argument(
         '--log_every_n_steps',
@@ -89,6 +102,8 @@ def main():
         help='Log / progress-bar metrics every N training steps (default 25; use 50 for quieter).',
     )
     args = parser.parse_args()
+    if args.resume and args.resume_weights_only:
+        parser.error('Use either --resume or --resume_weights_only, not both.')
 
     mp.set_start_method('spawn', force=True)
 
@@ -103,7 +118,7 @@ def main():
     # CLI overrides
     if args.batch_size:           train_cfg.batch_size    = args.batch_size
     if args.num_workers is not None: train_cfg.num_workers = args.num_workers
-    if args.epochs:               train_cfg.max_epochs    = args.epochs
+    train_cfg.max_epochs = args.epochs
     if args.lr:                   train_cfg.learning_rate = args.lr
 
     accum_grad = ACCUM if args.accum_grad_batches is None else args.accum_grad_batches
@@ -159,6 +174,18 @@ def main():
         fusion_config=fusion_cfg,
     )
 
+    ckpt_path_fit = args.resume
+    if args.resume_weights_only:
+        ckpt = torch.load(args.resume_weights_only, map_location='cpu', weights_only=False)
+        if 'state_dict' not in ckpt:
+            parser.error(f"Not a Lightning checkpoint: {args.resume_weights_only}")
+        model.load_state_dict(ckpt['state_dict'], strict=True)
+        ckpt_path_fit = None
+        print(
+            f"Loaded weights only from {args.resume_weights_only} — "
+            "optimizer/scheduler reset; epoch counter starts at 0.\n",
+            flush=True,
+        )
 
     proj_cfg.results_dir.mkdir(parents=True, exist_ok=True)
     ckpt_dir = proj_cfg.project_root / "lightning_logs_vgg16" / "checkpoints"
@@ -180,7 +207,7 @@ def main():
             verbose=True,
         ),
         pl.callbacks.LearningRateMonitor(logging_interval='epoch'),
-        ValMetricsCSV(csv_path=str(proj_cfg.results_dir / "val_metrics_vgg16.csv")),
+        ValMetricsCSV(csv_path=str(proj_cfg.results_dir / "vgg16" / "val_metrics.csv")),
     ]
 
     trainer = pl.Trainer(
@@ -212,7 +239,7 @@ def main():
     print(f"  Val samples:     {len(val_dataset):,}")
     print(f"  Max epochs:      {train_cfg.max_epochs}  (patience={train_cfg.early_stopping_patience})")
     print(f"  Checkpoints:     {ckpt_dir.resolve()}")
-    print(f"  Val metrics CSV: {(proj_cfg.results_dir / 'val_metrics_vgg16.csv').resolve()}")
+    print(f"  Val metrics CSV: {(proj_cfg.results_dir / 'vgg16' / 'val_metrics.csv').resolve()}")
     if _resuming:
         print("  Resume:          persistent_workers=OFF (avoids post-restore dataloader freezes)")
     print(f"{'='*60}")
@@ -227,8 +254,8 @@ def main():
         model,
         train_loader,
         val_loader,
-        ckpt_path=args.resume,
-        weights_only=False if args.resume else None,
+        ckpt_path=ckpt_path_fit,
+        weights_only=False if ckpt_path_fit else None,
     )
 
 
