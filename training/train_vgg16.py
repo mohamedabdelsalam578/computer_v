@@ -39,7 +39,7 @@ if torch.cuda.is_available():
     PIN_MEMORY  = True
     # VGG16 encoder is 14.7M params — much lighter than CLIP (87M).
     # Push bs=512 so GPU compute stays saturated; VGG16 fits easily in 24GB.
-    NUM_WORKERS = 16
+    NUM_WORKERS = 8
     BATCH_SIZE  = 512
     ACCUM       = 1              # effective bs = 512 (no accumulation needed)
     torch.set_float32_matmul_precision('high')
@@ -124,7 +124,7 @@ def main():
     _resuming = bool(args.resume)
     # VGG16 has no gradient checkpointing — persistent workers safe even on resume
     _persistent_ok = _persist
-    _prefetch = 8 if ACCELERATOR == "gpu" else (2 if _persist else None)
+    _prefetch = 2 if _persist else None   # prefetch_factor=2 per worker (PyTorch default)
 
     train_loader = DataLoader(
         train_dataset,
