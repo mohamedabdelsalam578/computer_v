@@ -37,11 +37,11 @@ if torch.cuda.is_available():
     ACCELERATOR = 'gpu'
     DEVICE_NAME = torch.cuda.get_device_name(0)
     PIN_MEMORY  = True
-    # VGG16 encoder is 14.7M params — much lighter than CLIP (87M)
-    # Can use larger batch sizes without OOM
-    NUM_WORKERS = 12
-    BATCH_SIZE  = 128
-    ACCUM       = 1              # effective bs = 128 (no accumulation needed)
+    # VGG16 encoder is 14.7M params — much lighter than CLIP (87M).
+    # Push bs=512 so GPU compute stays saturated; VGG16 fits easily in 24GB.
+    NUM_WORKERS = 16
+    BATCH_SIZE  = 512
+    ACCUM       = 1              # effective bs = 512 (no accumulation needed)
     torch.set_float32_matmul_precision('high')
 elif torch.backends.mps.is_available():
     ACCELERATOR = 'mps'
@@ -122,8 +122,9 @@ def main():
 
     _persist = train_cfg.num_workers > 0
     _resuming = bool(args.resume)
-    _persistent_ok = _persist and not _resuming
-    _prefetch = (4 if ACCELERATOR == "gpu" else 2) if _persistent_ok else (2 if _persist else None)
+    # VGG16 has no gradient checkpointing — persistent workers safe even on resume
+    _persistent_ok = _persist
+    _prefetch = 8 if ACCELERATOR == "gpu" else (2 if _persist else None)
 
     train_loader = DataLoader(
         train_dataset,
@@ -150,6 +151,11 @@ def main():
         train_config=train_cfg,
         fusion_config=fusion_cfg,
     )
+
+    # torch.compile gives ~20-40% speedup on small models like VGG16 (PyTorch ≥ 2.0)
+    if ACCELERATOR == 'gpu' and hasattr(torch, 'compile'):
+        print("  Compiling model with torch.compile (mode=reduce-overhead)...")
+        model.model = torch.compile(model.model, mode='reduce-overhead')
 
     proj_cfg.results_dir.mkdir(parents=True, exist_ok=True)
     ckpt_dir = proj_cfg.project_root / "lightning_logs_vgg16" / "checkpoints"
@@ -191,7 +197,8 @@ def main():
     eff_bs = train_cfg.batch_size * accum_grad
     steps  = len(train_dataset) // eff_bs
     print(f"\n{'='*60}")
-    print(f"  Model:           VGG16 dual-branch (ImageNet pretrained)")
+    compiled = ACCELERATOR == 'gpu' and hasattr(torch, 'compile')
+    print(f"  Model:           VGG16 dual-branch (ImageNet pretrained){' + torch.compile' if compiled else ''}")
     print(f"  Device:          {DEVICE_NAME}")
     print(f"  Accelerator:     {ACCELERATOR.upper()}")
     print(f"  Batch size:      {train_cfg.batch_size} × accum {accum_grad} = {eff_bs} effective")
