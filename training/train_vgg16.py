@@ -40,8 +40,8 @@ if torch.cuda.is_available():
     # VGG16 encoder is 14.7M params — much lighter than CLIP (87M).
     # Push bs=512 so GPU compute stays saturated; VGG16 fits easily in 24GB.
     NUM_WORKERS = 8
-    BATCH_SIZE  = 512
-    ACCUM       = 1              # effective bs = 512 (no accumulation needed)
+    BATCH_SIZE  = 128            # VGG16 early conv layers (224×224) are VRAM-hungry
+    ACCUM       = 1              # effective bs = 128
     torch.set_float32_matmul_precision('high')
 elif torch.backends.mps.is_available():
     ACCELERATOR = 'mps'
@@ -152,10 +152,6 @@ def main():
         fusion_config=fusion_cfg,
     )
 
-    # torch.compile gives ~20-40% speedup on small models like VGG16 (PyTorch ≥ 2.0)
-    if ACCELERATOR == 'gpu' and hasattr(torch, 'compile'):
-        print("  Compiling model with torch.compile (mode=reduce-overhead)...")
-        model.model = torch.compile(model.model, mode='reduce-overhead')
 
     proj_cfg.results_dir.mkdir(parents=True, exist_ok=True)
     ckpt_dir = proj_cfg.project_root / "lightning_logs_vgg16" / "checkpoints"
@@ -197,8 +193,7 @@ def main():
     eff_bs = train_cfg.batch_size * accum_grad
     steps  = len(train_dataset) // eff_bs
     print(f"\n{'='*60}")
-    compiled = ACCELERATOR == 'gpu' and hasattr(torch, 'compile')
-    print(f"  Model:           VGG16 dual-branch (ImageNet pretrained){' + torch.compile' if compiled else ''}")
+    print(f"  Model:           VGG16 dual-branch (ImageNet pretrained)")
     print(f"  Device:          {DEVICE_NAME}")
     print(f"  Accelerator:     {ACCELERATOR.upper()}")
     print(f"  Batch size:      {train_cfg.batch_size} × accum {accum_grad} = {eff_bs} effective")
