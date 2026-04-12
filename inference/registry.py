@@ -7,11 +7,13 @@ To register a new pipeline:
 """
 from inference.ferretnet_pipeline import FerretNetPipeline
 from inference.clip_pipeline import CLIPPipeline
+from inference.vgg16_pipeline import VGG16Pipeline
 
 # Ordered list — shown in this order in the UI
 ALL_PIPELINES = [
     FerretNetPipeline(),
     CLIPPipeline(),
+    VGG16Pipeline(),
 ]
 
 

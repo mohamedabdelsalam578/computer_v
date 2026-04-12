@@ -24,9 +24,10 @@ def _find_weights(proj: ProjectConfig) -> Tuple[Optional[Path], str]:
     Resolution order:
       1. AI_CV_CLIP_CHECKPOINT — explicit .ckpt or .pt path (highest priority)
       2. weights/clip_finetuned.pt — exported bundle
-      3. If AI_CV_CLIP_USE_LAST=1 (or Streamlit sidebar “prefer last.ckpt”): last.ckpt
-      4. Best lightning_logs_clip/checkpoints/clip-*.ckpt by val_fused_acc in filename
-      5. last.ckpt if nothing else matched
+      3. Best weights/clip-*.ckpt (e.g. copied from training), by val_fused_acc in filename
+      4. If AI_CV_CLIP_USE_LAST=1 (or Streamlit sidebar “prefer last.ckpt”): last.ckpt
+      5. Best lightning_logs_clip/checkpoints/clip-*.ckpt by val_fused_acc in filename
+      6. last.ckpt if nothing else matched
     """
     override = os.environ.get("AI_CV_CLIP_CHECKPOINT", "").strip()
     if override:
@@ -38,6 +39,17 @@ def _find_weights(proj: ProjectConfig) -> Tuple[Optional[Path], str]:
     pt_path = proj.weights_dir / "clip_finetuned.pt"
     if pt_path.exists():
         return pt_path, "pt"
+
+    # Checkpoints copied next to other weights (e.g. clip-epoch=25-val_fused_acc=0.9767.ckpt)
+    weights_ckpts = [
+        p for p in glob.glob(str(proj.weights_dir / "clip-*.ckpt"))
+        if "last" not in Path(p).name.lower()
+    ]
+    if weights_ckpts:
+        best = Path(
+            sorted(weights_ckpts, key=lambda p: p.split("=")[-1], reverse=True)[0]
+        )
+        return best, "ckpt"
 
     ckpt_dir = proj.project_root / "lightning_logs_clip" / "checkpoints"
     if not ckpt_dir.exists():

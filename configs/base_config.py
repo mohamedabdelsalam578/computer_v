@@ -88,3 +88,7 @@ class RetinaFaceConfig:
 
 FERRETNET_NORMALIZE_MEAN = [0.48145466, 0.4578275, 0.40821073]
 FERRETNET_NORMALIZE_STD = [0.26862954, 0.26130258, 0.27577711]
+
+# Standard ImageNet normalization — used by VGG16 and other torchvision models
+VGG_NORMALIZE_MEAN = [0.485, 0.456, 0.406]
+VGG_NORMALIZE_STD  = [0.229, 0.224, 0.225]
