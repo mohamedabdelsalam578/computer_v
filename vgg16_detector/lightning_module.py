@@ -90,9 +90,8 @@ class VGG16DetectorLightning(pl.LightningModule):
         self._val_total.clear()
 
     def configure_optimizers(self):
-        # VGG16 encoder: low lr (pretrained features, don't destroy them)
-        # Two heads: full lr (random init, need fast convergence)
-        encoder_params = list(self.model.encoder.parameters())
+        # Only optimize unfrozen encoder params (blocks 4-5) + heads
+        encoder_params = [p for p in self.model.encoder.parameters() if p.requires_grad]
         head_params    = (list(self.model.face_head.parameters())
                           + list(self.model.full_head.parameters()))
 

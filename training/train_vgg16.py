@@ -39,9 +39,9 @@ if torch.cuda.is_available():
     PIN_MEMORY  = True
     # VGG16 encoder is 14.7M params — much lighter than CLIP (87M).
     # Push bs=512 so GPU compute stays saturated; VGG16 fits easily in 24GB.
-    NUM_WORKERS = 8
-    BATCH_SIZE  = 128            # VGG16 early conv layers (224×224) are VRAM-hungry
-    ACCUM       = 1              # effective bs = 128
+    NUM_WORKERS = 12
+    BATCH_SIZE  = 256            # blocks 1-3 frozen → no backward allocs for early layers
+    ACCUM       = 1              # effective bs = 256
     torch.set_float32_matmul_precision('high')
 elif torch.backends.mps.is_available():
     ACCELERATOR = 'mps'
@@ -68,6 +68,7 @@ from data.transforms import get_train_transforms, get_val_transforms
 from data.dual_branch_dataset import DualBranchDataset
 from vgg16_detector.lightning_module import VGG16DetectorLightning
 from training.callbacks import ValMetricsCSV
+from training.run_context import print_distributed_env
 
 VGG_IMAGE_SIZE = 224   # VGG16 standard input size
 
@@ -81,6 +82,12 @@ def main():
     parser.add_argument('--num_workers', type=int,   default=None)
     parser.add_argument('--epochs',      type=int,   default=None)
     parser.add_argument('--lr',          type=float, default=None)
+    parser.add_argument(
+        '--log_every_n_steps',
+        type=int,
+        default=25,
+        help='Log / progress-bar metrics every N training steps (default 25; use 50 for quieter).',
+    )
     args = parser.parse_args()
 
     mp.set_start_method('spawn', force=True)
@@ -185,13 +192,14 @@ def main():
         accumulate_grad_batches=accum_grad,
         callbacks=callbacks,
         default_root_dir=str(proj_cfg.project_root),
-        log_every_n_steps=50,
+        log_every_n_steps=args.log_every_n_steps,
         benchmark=(ACCELERATOR == 'gpu'),
         num_sanity_val_steps=0,
     )
 
     eff_bs = train_cfg.batch_size * accum_grad
     steps  = len(train_dataset) // eff_bs
+    print_distributed_env()
     print(f"\n{'='*60}")
     print(f"  Model:           VGG16 dual-branch (ImageNet pretrained)")
     print(f"  Device:          {DEVICE_NAME}")
@@ -207,6 +215,12 @@ def main():
     print(f"  Val metrics CSV: {(proj_cfg.results_dir / 'val_metrics_vgg16.csv').resolve()}")
     if _resuming:
         print("  Resume:          persistent_workers=OFF (avoids post-restore dataloader freezes)")
+    print(f"{'='*60}")
+    if train_cfg.precision == "16-mixed":
+        print(
+            "  Note: Lightning model summary uses FP32 for estimated size (MB);\n"
+            "        training still runs in 16-mixed on GPU (same as PyTorch Lightning warning).\n"
+        )
     print(f"{'='*60}\n")
 
     trainer.fit(

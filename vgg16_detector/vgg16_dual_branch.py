@@ -21,7 +21,16 @@ class VGG16DualBranchDetector(nn.Module):
     Output: raw logits (B, 1) — apply sigmoid for probability.
     """
 
-    def __init__(self, pretrained: bool = True, fusion_config: FusionConfig = None):
+    # VGG16 features block boundaries:
+    #   block1: [0:5]   — 64 filters, 224×224  (edges, gradients)
+    #   block2: [5:10]  — 128 filters, 112×112 (textures)
+    #   block3: [10:17] — 256 filters, 56×56   (patterns)
+    #   block4: [17:24] — 512 filters, 28×28   (parts)
+    #   block5: [24:31] — 512 filters, 14×14   (objects)
+    BLOCK_ENDS = [5, 10, 17, 24, 31]
+
+    def __init__(self, pretrained: bool = True, fusion_config: FusionConfig = None,
+                 freeze_blocks: int = 3):
         super().__init__()
         self.fusion = fusion_config or FusionConfig()
 
@@ -32,12 +41,24 @@ class VGG16DualBranchDetector(nn.Module):
         self.encoder = vgg.features
         self.pool    = nn.AdaptiveAvgPool2d((1, 1))   # → (B, 512, 1, 1)
 
+        # Freeze early blocks — they learn universal features that transfer perfectly.
+        # Saves ~60% backward compute + activation memory → bigger batch size.
+        if freeze_blocks > 0:
+            freeze_until = self.BLOCK_ENDS[min(freeze_blocks, 5) - 1]
+            for i, layer in enumerate(self.encoder):
+                if i < freeze_until:
+                    for p in layer.parameters():
+                        p.requires_grad = False
+
         # Two independent classification heads
         self.face_head = self._build_head(512)
         self.full_head = self._build_head(512)
 
-        total = sum(p.numel() for p in self.parameters()) / 1e6
-        print(f"  VGG16DualBranchDetector | encoder=14.7M | total={total:.1f}M params")
+        trainable   = sum(p.numel() for p in self.parameters() if p.requires_grad) / 1e6
+        total       = sum(p.numel() for p in self.parameters()) / 1e6
+        frozen_pct  = (1 - trainable / total) * 100
+        print(f"  VGG16DualBranchDetector | total={total:.1f}M | trainable={trainable:.1f}M "
+              f"| frozen={frozen_pct:.0f}% (blocks 1-{freeze_blocks})")
 
     @staticmethod
     def _build_head(in_features: int) -> nn.Sequential:
