@@ -98,24 +98,21 @@ class VGG16DualBranchDetector(nn.Module):
         return face_logit, full_logit
 
     @torch.no_grad()
-    def predict(self, face_crops_list: list, full_image: torch.Tensor) -> float:
+    def predict(self, face_crops_list: list, full_image: torch.Tensor):
         """
-        Inference with weighted fusion.
+        Independent inference — no fusion.
 
         Args:
             face_crops_list: list of (1, 3, 224, 224) tensors
             full_image:      (1, 3, 224, 224)
         Returns:
-            float: AI probability [0, 1]
+            (full_prob, face_scores): full image P(AI) and list of per-face P(AI)
         """
-        full_feat  = self._encode(full_image)
-        full_prob  = torch.sigmoid(self.full_head(full_feat))[0, 0].item()
-
-        if not face_crops_list:
-            return full_prob
+        full_feat = self._encode(full_image)
+        full_prob = torch.sigmoid(self.full_head(full_feat))[0, 0].item()
 
         face_scores = [
             torch.sigmoid(self.face_head(self._encode(c)))[0, 0].item()
             for c in face_crops_list
         ]
-        return self.fusion.face_weight * max(face_scores) + self.fusion.full_weight * full_prob
+        return full_prob, face_scores

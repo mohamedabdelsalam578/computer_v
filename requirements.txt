@@ -1,17 +1,32 @@
+# ── Core Deep Learning ───────────────────────────────────────
 torch>=2.4.0
 torchvision>=0.19.0
 pytorch-lightning>=2.4.0
 transformers>=4.40.0
 safetensors>=0.4.0
-einops>=0.8.0
+
+# ── Image Processing ────────────────────────────────────────
 Pillow>=11.0
 opencv-python-headless>=4.9
+
+# ── Data & Scientific Computing ─────────────────────────────
 numpy>=1.26
+pandas>=2.2
 scikit-learn>=1.5
-scipy>=1.14
+
+# ── Visualization ───────────────────────────────────────────
 matplotlib>=3.9
+seaborn>=0.13
+
+# ── Progress & Utilities ────────────────────────────────────
 tqdm>=4.66
-kaggle>=1.6
+
+# ── Data Download ───────────────────────────────────────────
+kagglehub>=0.3
+
+# ── Web App ─────────────────────────────────────────────────
 streamlit>=1.35.0
+
+# ── Notebooks ───────────────────────────────────────────────
 jupyter>=1.0
 ipywidgets>=8.0

@@ -19,21 +19,17 @@ IMAGE_SIZE = 224   # VGG16 standard input
 def _find_weights(proj: ProjectConfig) -> Tuple[Optional[Path], str]:
     """
     Returns (path, kind) where kind is 'pt' (exported) or 'ckpt' (Lightning).
-    Priority: exported weights/vgg16_finetuned.pt → best .ckpt → last.ckpt
+    Priority: exported weights/vgg16_finetuned.pt → best vgg16-*.ckpt in weights/
     """
     pt_path = proj.weights_dir / "vgg16_finetuned.pt"
     if pt_path.exists():
         return pt_path, "pt"
 
-    ckpt_dir = proj.project_root / "lightning_logs_vgg16" / "checkpoints"
-    if ckpt_dir.exists():
-        candidates = [p for p in glob.glob(str(ckpt_dir / "vgg16-*.ckpt")) if 'last' not in p]
-        if candidates:
-            best = Path(sorted(candidates, key=lambda p: p.split('=')[-1], reverse=True)[0])
-            return best, "ckpt"
-        last = ckpt_dir / "last.ckpt"
-        if last.exists():
-            return last, "ckpt"
+    # Check for .ckpt files in weights/
+    candidates = [p for p in glob.glob(str(proj.weights_dir / "vgg16-*.ckpt")) if 'last' not in p]
+    if candidates:
+        best = Path(sorted(candidates, key=lambda p: p.split('=')[-1], reverse=True)[0])
+        return best, "ckpt"
 
     return None, "none"
 
@@ -79,15 +75,13 @@ class VGG16Pipeline(BasePipeline):
     def classify(self, image: Image.Image, threshold: float = 0.5) -> PipelineResult:
         if not self.is_available():
             return PipelineResult(
-                pipeline_name=self.name, label="Unavailable",
-                probability=0, face_score=-1, full_score=0,
-                fused_score=0, num_faces=0,
+                pipeline_name=self.name, label="Unavailable", full_score=0,
                 error="No checkpoint found. Train VGG16 pipeline first.",
             )
         try:
             self._load_model()
             t0 = time.time()
-            face_crops, face_boxes = detect_faces(image, crop_size=IMAGE_SIZE)
+            face_crops, face_boxes, _ = detect_faces(image, crop_size=IMAGE_SIZE)
 
             full_tensor = self._transform(image.resize((IMAGE_SIZE, IMAGE_SIZE))).unsqueeze(0).to(self._device)
 
@@ -97,28 +91,22 @@ class VGG16Pipeline(BasePipeline):
                 )
                 full_score = torch.sigmoid(full_logit)[0, 0].item()
 
-                face_score = -1.0
-                if face_crops:
-                    scores = []
-                    for crop in face_crops:
-                        t     = self._transform(crop).unsqueeze(0).to(self._device)
-                        feat  = self._model.model._encode(t)
-                        logit = self._model.model.face_head(feat)
-                        scores.append(torch.sigmoid(logit)[0, 0].item())
-                    face_score = max(scores)
+                face_scores = []
+                for crop in face_crops:
+                    t     = self._transform(crop).unsqueeze(0).to(self._device)
+                    feat  = self._model.model._encode(t)
+                    logit = self._model.model.face_head(feat)
+                    face_scores.append(torch.sigmoid(logit)[0, 0].item())
 
-            fusion = self._model.model.fusion
-            fused  = (fusion.face_weight * face_score + fusion.full_weight * full_score
-                      if face_score >= 0 else full_score)
+            full_label = "AI Generated" if full_score > threshold else "Real"
+            face_labels = ["AI Generated" if s > threshold else "Real" for s in face_scores]
 
-            label = "AI Generated" if fused > threshold else "Real"
             return PipelineResult(
                 pipeline_name=self.name,
-                label=label,
-                probability=fused,
-                face_score=face_score,
+                label=full_label,
                 full_score=full_score,
-                fused_score=fused,
+                face_scores=face_scores,
+                face_labels=face_labels,
                 num_faces=len(face_crops),
                 face_crops=face_crops,
                 face_boxes=face_boxes,
@@ -126,7 +114,5 @@ class VGG16Pipeline(BasePipeline):
             )
         except Exception as e:
             return PipelineResult(
-                pipeline_name=self.name, label="Error",
-                probability=0, face_score=-1, full_score=0,
-                fused_score=0, num_faces=0, error=str(e),
+                pipeline_name=self.name, label="Error", full_score=0, error=str(e),
             )

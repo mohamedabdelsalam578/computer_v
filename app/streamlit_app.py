@@ -58,21 +58,20 @@ def render_result_card(result, threshold: float):
         st.warning(f"**{result.pipeline_name}** — {result.error}")
         return
 
-    prob = result.fused_score
-    color = confidence_color(prob)
-    is_ai = prob > threshold
-
-    icon = "🔴" if is_ai else "🟢"
+    # ── Full image prediction ──
+    full_color = confidence_color(result.full_score)
+    full_is_ai = result.full_score > threshold
+    icon = "🔴" if full_is_ai else "🟢"
     st.markdown(
-        f"<h3 style='color:{color}'>{icon} {result.label}</h3>",
+        f"<h3 style='color:{full_color}'>{icon} Full Image: {result.label}</h3>",
         unsafe_allow_html=True,
     )
 
-    pct = int(prob * 100)
+    pct = int(result.full_score * 100)
     st.markdown(
         f"""
         <div style='background:#eee;border-radius:6px;height:24px;width:100%'>
-          <div style='background:{color};width:{pct}%;height:24px;border-radius:6px;
+          <div style='background:{full_color};width:{pct}%;height:24px;border-radius:6px;
                       display:flex;align-items:center;padding-left:8px'>
             <span style='color:white;font-size:12px;font-weight:bold'>{pct}% AI</span>
           </div>
@@ -82,14 +81,7 @@ def render_result_card(result, threshold: float):
     )
     st.markdown("")
 
-    col_a, col_b, col_c = st.columns(3)
-    with col_a:
-        face_val = f"{result.face_score:.3f}" if result.face_score >= 0 else "No faces"
-        st.metric("Face Score", face_val)
-    with col_b:
-        st.metric("Full Image", f"{result.full_score:.3f}")
-    with col_c:
-        st.metric("Fused", f"{result.fused_score:.3f}")
+    st.metric("Full Image Score", f"{result.full_score:.3f}")
 
     st.caption(
         f"Faces detected: {result.num_faces}  |  "
@@ -97,11 +89,21 @@ def render_result_card(result, threshold: float):
         f"Model: {result.pipeline_name}"
     )
 
+    # ── Per-face predictions ──
     if result.face_crops:
-        with st.expander(f"Face crops ({len(result.face_crops)})", expanded=False):
+        with st.expander(f"Face predictions ({len(result.face_crops)})", expanded=True):
             cols = st.columns(min(len(result.face_crops), 4))
             for i, crop in enumerate(result.face_crops[:4]):
-                cols[i].image(crop, caption=f"Face {i+1}", use_container_width=True)
+                with cols[i]:
+                    st.image(crop, use_container_width=True)
+                    score = result.face_scores[i] if i < len(result.face_scores) else 0
+                    label = result.face_labels[i] if i < len(result.face_labels) else "N/A"
+                    fc = confidence_color(score)
+                    fi = "🔴" if score > threshold else "🟢"
+                    st.markdown(f"{fi} **Face {i+1}: {label}**")
+                    st.caption(f"Score: {score:.3f} ({int(score*100)}% AI)")
+    else:
+        st.info("No faces detected — full image score only.")
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -225,13 +227,17 @@ elif page == "Model Comparison":
     for col, p in zip(chart_cols, available):
         r = results[p.name]
         if not r.error:
-            color = confidence_color(r.fused_score)
-            icon = "🔴" if r.fused_score > threshold else "🟢"
+            color = confidence_color(r.full_score)
+            icon = "🔴" if r.full_score > threshold else "🟢"
             col.metric(
                 p.name,
                 f"{icon} {r.label}",
-                f"{r.fused_score:.1%} AI confidence",
+                f"{r.full_score:.1%} AI (full image)",
             )
+            if r.face_scores:
+                for i, fs in enumerate(r.face_scores):
+                    fi = "🔴" if fs > threshold else "🟢"
+                    col.caption(f"{fi} Face {i+1}: {fs:.1%} AI")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -242,9 +248,9 @@ elif page == "Metrics Dashboard":
     st.markdown("Pre-computed evaluation metrics from the test set (20,000 images).")
 
     eval_files = {
-        "FerretNet":     RESULTS_DIR / "evaluation" / "results.json",
-        "CLIP ViT-B/32": RESULTS_DIR / "evaluation_clip" / "clip_eval_results.json",
-        "VGG16":         RESULTS_DIR / "evaluation_vgg16" / "vgg16_eval_results.json",
+        "FerretNet":     RESULTS_DIR / "ferretnet" / "results.json",
+        "CLIP ViT-B/32": RESULTS_DIR / "clip" / "eval_results.json",
+        "VGG16":         RESULTS_DIR / "vgg16" / "eval_results.json",
     }
 
     loaded_results = {}

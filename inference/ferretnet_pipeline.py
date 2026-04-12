@@ -16,16 +16,15 @@ from configs.base_config import (
 IMAGE_SIZE = 256
 
 
-def _get_best_ckpt(ckpt_dir: Path) -> Optional[Path]:
-    """Find best checkpoint by val_fused_acc in filename, fall back to last.ckpt."""
-    if not ckpt_dir.exists():
+def _get_best_ckpt(weights_dir: Path) -> Optional[Path]:
+    """Find best FerretNet checkpoint in weights/ directory."""
+    if not weights_dir.exists():
         return None
-    pattern = str(ckpt_dir / "ferretnet-*.ckpt")
+    pattern = str(weights_dir / "ferretnet-*.ckpt")
     candidates = [p for p in glob.glob(pattern) if 'last' not in p]
     if candidates:
-        # filename contains val_fused_acc — pick highest
         return Path(sorted(candidates, key=lambda p: p.split('=')[-1], reverse=True)[0])
-    last = ckpt_dir / "last.ckpt"
+    last = weights_dir / "last.ckpt"
     return last if last.exists() else None
 
 
@@ -45,7 +44,7 @@ class FerretNetPipeline(BasePipeline):
 
     def _resolved_ckpt(self) -> Optional[Path]:
         """Resolve on every call so @st.cache_resource + new checkpoints still work."""
-        return _get_best_ckpt(ProjectConfig().lightning_logs / "checkpoints")
+        return _get_best_ckpt(ProjectConfig().weights_dir)
 
     def is_available(self) -> bool:
         p = self._resolved_ckpt()
@@ -68,15 +67,13 @@ class FerretNetPipeline(BasePipeline):
     def classify(self, image: Image.Image, threshold: float = 0.5) -> PipelineResult:
         if not self.is_available():
             return PipelineResult(
-                pipeline_name=self.name, label="Unavailable",
-                probability=0, face_score=-1, full_score=0,
-                fused_score=0, num_faces=0,
+                pipeline_name=self.name, label="Unavailable", full_score=0,
                 error="No checkpoint found. Train FerretNet first.",
             )
         try:
             self._load_model()
             t0 = time.time()
-            face_crops, face_boxes, face_det_scores = detect_faces(image, crop_size=IMAGE_SIZE)
+            face_crops, face_boxes, _ = detect_faces(image, crop_size=IMAGE_SIZE)
 
             full_tensor = self._transform(image.resize((IMAGE_SIZE, IMAGE_SIZE))).unsqueeze(0).to(self._device)
 
@@ -84,38 +81,27 @@ class FerretNetPipeline(BasePipeline):
                 full_logit = self._model.model.forward_full_branch(full_tensor)
                 full_score = torch.sigmoid(full_logit)[0, 0].item()
 
-                face_score = -1.0
-                if face_crops:
-                    scores = []
-                    for crop in face_crops:
-                        t = self._transform(crop).unsqueeze(0).to(self._device)
-                        logit = self._model.model.forward_face_branch(t)
-                        scores.append(torch.sigmoid(logit)[0, 0].item())
-                    face_score = max(scores)
+                face_scores = []
+                for crop in face_crops:
+                    t = self._transform(crop).unsqueeze(0).to(self._device)
+                    logit = self._model.model.forward_face_branch(t)
+                    face_scores.append(torch.sigmoid(logit)[0, 0].item())
 
-            fusion = self._model.model.fusion
-            if face_score >= 0:
-                fused = fusion.face_weight * face_score + fusion.full_weight * full_score
-            else:
-                fused = full_score
+            full_label = "AI Generated" if full_score > threshold else "Real"
+            face_labels = ["AI Generated" if s > threshold else "Real" for s in face_scores]
 
-            label = "AI Generated" if fused > threshold else "Real"
             return PipelineResult(
                 pipeline_name=self.name,
-                label=label,
-                probability=fused,
-                face_score=face_score,
+                label=full_label,
                 full_score=full_score,
-                fused_score=fused,
+                face_scores=face_scores,
+                face_labels=face_labels,
                 num_faces=len(face_crops),
                 face_crops=face_crops,
                 face_boxes=face_boxes,
-                face_detection_scores=face_det_scores,
                 processing_time=time.time() - t0,
             )
         except Exception as e:
             return PipelineResult(
-                pipeline_name=self.name, label="Error",
-                probability=0, face_score=-1, full_score=0,
-                fused_score=0, num_faces=0, error=str(e),
+                pipeline_name=self.name, label="Error", full_score=0, error=str(e),
             )

@@ -208,7 +208,7 @@ def main():
             verbose=True,
         ),
         pl.callbacks.LearningRateMonitor(logging_interval='epoch'),
-        ValMetricsCSV(csv_path=str(proj_cfg.results_dir / "val_metrics.csv")),
+        ValMetricsCSV(csv_path=str(proj_cfg.results_dir / "ferretnet" / "val_metrics.csv")),
     ]
 
     trainer = pl.Trainer(
@@ -238,7 +238,7 @@ def main():
     print(f"  Val samples:     {len(val_dataset):,}")
     print(f"  Max epochs:      {train_cfg.max_epochs}  (early stop patience={train_cfg.early_stopping_patience})")
     print(f"  Checkpoints:     {ckpt_dir.resolve()}")
-    print(f"  Val metrics CSV: {(proj_cfg.results_dir / 'val_metrics.csv').resolve()}")
+    print(f"  Val metrics CSV: {(proj_cfg.results_dir / 'ferretnet' / 'val_metrics.csv').resolve()}")
     print(f"  PROJECT_ROOT:    {proj_cfg.project_root.resolve()}")
     print(f"{'='*60}")
     if train_cfg.precision == "16-mixed":

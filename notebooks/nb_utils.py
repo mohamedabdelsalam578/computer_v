@@ -224,7 +224,7 @@ def evaluate_pipeline(pipeline, samples, max_images=2000):
             if result.error:
                 continue
             y_true.append(s["label"])
-            y_scores.append(result.fused_score)
+            y_scores.append(result.full_score)
         except Exception:
             continue
 
@@ -291,7 +291,7 @@ def show_predictions(pipeline, samples, n=8):
         ax.imshow(img)
         true_label = "Real" if s["label"] == 0 else "AI"
         pred_label = result.label if not result.error else "Error"
-        conf = result.fused_score if not result.error else 0
+        conf = result.full_score if not result.error else 0
 
         correct = (s["label"] == 1 and conf > 0.5) or (s["label"] == 0 and conf <= 0.5)
         color = "green" if correct else "red"

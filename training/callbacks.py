@@ -9,7 +9,7 @@ class ValMetricsCSV(pl.Callback):
     """Append validation metrics to CSV after each validation epoch.
     Persists across resume — always has complete training history."""
 
-    def __init__(self, csv_path: str = "results/val_metrics.csv"):
+    def __init__(self, csv_path: str = "results/ferretnet/val_metrics.csv"):
         self.csv_path = csv_path
         self.fieldnames = [
             'epoch', 'train_loss', 'val_loss',

@@ -196,7 +196,7 @@ def main():
             verbose=True,
         ),
         pl.callbacks.LearningRateMonitor(logging_interval='epoch'),
-        ValMetricsCSV(csv_path=str(proj_cfg.results_dir / "val_metrics_clip.csv")),
+        ValMetricsCSV(csv_path=str(proj_cfg.results_dir / "clip" / "val_metrics.csv")),
     ]
 
     trainer = pl.Trainer(
@@ -228,7 +228,7 @@ def main():
     print(f"  Val samples:     {len(val_dataset):,}")
     print(f"  Max epochs:      {train_cfg.max_epochs}  (patience={train_cfg.early_stopping_patience})")
     print(f"  Checkpoints:     {ckpt_dir.resolve()}")
-    print(f"  Val metrics CSV: {(proj_cfg.results_dir / 'val_metrics_clip.csv').resolve()}")
+    print(f"  Val metrics CSV: {(proj_cfg.results_dir / 'clip' / 'val_metrics.csv').resolve()}")
     if _resuming:
         print("  Resume:          persistent_workers=OFF (avoids post-restore dataloader freezes)")
     print(f"{'='*60}")

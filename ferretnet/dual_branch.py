@@ -14,7 +14,7 @@ class DualBranchFerretNet(nn.Module):
 
     Face branch: processes face crops (256x256)
     Full branch: processes full images (256x256)
-    Fusion: 0.6 * max(face_scores) + 0.4 * full_score
+    Each face and the full image are classified independently — no fusion.
     """
 
     def __init__(self, pretrained_path: Optional[str] = None, fusion_config: FusionConfig = None):
@@ -90,23 +90,19 @@ class DualBranchFerretNet(nn.Module):
     @torch.no_grad()
     def predict(self, face_crops_list, full_image):
         """
-        Inference with fusion.
+        Independent inference — no fusion.
 
         Args:
             face_crops_list: list of (1, 3, 256, 256) tensors (one per face)
             full_image: (1, 3, 256, 256) tensor
 
         Returns:
-            float: fused probability of being AI-generated [0, 1]
+            (full_prob, face_scores): full image P(AI) and list of per-face P(AI)
         """
         full_prob = torch.sigmoid(self.full_net(full_image))[0, 0].item()
-
-        if not face_crops_list:
-            return full_prob
 
         face_scores = [
             torch.sigmoid(self.face_net(crop))[0, 0].item()
             for crop in face_crops_list
         ]
-        max_face_score = max(face_scores)
-        return self.fusion.face_weight * max_face_score + self.fusion.full_weight * full_prob
+        return full_prob, face_scores

@@ -11,7 +11,8 @@ Usage:
     python training/train_vgg16.py --resume lightning_logs_vgg16/checkpoints/last.ckpt
     python training/train_vgg16.py --resume_weights_only lightning_logs_vgg16/checkpoints/last.ckpt
     python training/train_vgg16.py --epochs 20 --lr 1e-4
-    python training/train_vgg16.py --batch_size 256 --num_workers 16
+    python training/train_vgg16.py --batch_size 256 --num_workers 8
+    AI_CV_NUM_WORKERS=4 python training/train_vgg16.py   # cap workers without CLI
 """
 import os
 
@@ -33,16 +34,26 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+
+def _cuda_num_workers(default: int) -> int:
+    """RunPod / cloud VMs often have limited RAM; many workers + prefetch OOMs the host."""
+    env = os.environ.get("AI_CV_NUM_WORKERS", "").strip()
+    if env:
+        return max(0, int(env))
+    cpu = os.cpu_count() or 1
+    return max(1, min(default, cpu))
+
+
 # ── Hardware detection ─────────────────────────────────────────────────────────
 if torch.cuda.is_available():
     ACCELERATOR = 'gpu'
     DEVICE_NAME = torch.cuda.get_device_name(0)
     PIN_MEMORY  = True
-    # VGG16 encoder is 14.7M params — much lighter than CLIP (87M).
-    # Push bs=512 so GPU compute stays saturated; VGG16 fits easily in 24GB.
-    NUM_WORKERS = 12
-    BATCH_SIZE  = 256            # blocks 1-3 frozen → no backward allocs for early layers
-    ACCUM       = 1              # effective bs = 256
+    # VGG16 is light on VRAM but DataLoader workers use a lot of *host* RAM on RunPod.
+    # Default conservatively; raise with --num_workers 8 --batch_size 256 if you have headroom.
+    NUM_WORKERS = _cuda_num_workers(4)
+    BATCH_SIZE  = 128
+    ACCUM       = 1              # effective bs = 128 (use --accum_grad_batches 2 → 256)
     torch.set_float32_matmul_precision('high')
 elif torch.backends.mps.is_available():
     ACCELERATOR = 'mps'
@@ -91,8 +102,8 @@ def main():
     parser.add_argument(
         '--epochs',
         type=int,
-        default=15,
-        help='Maximum training epochs (default 15).',
+        default=5,
+        help='Maximum training epochs (default 5).',
     )
     parser.add_argument('--lr',          type=float, default=None)
     parser.add_argument(
@@ -146,7 +157,8 @@ def main():
     _resuming = bool(args.resume)
     # VGG16 has no gradient checkpointing — persistent workers safe even on resume
     _persistent_ok = _persist
-    _prefetch = 2 if _persist else None   # prefetch_factor=2 per worker (PyTorch default)
+    # Lower prefetch on CUDA to reduce RAM spikes (each worker holds prefetch_factor batches)
+    _prefetch = (1 if ACCELERATOR == "gpu" else 2) if _persist else None
 
     train_loader = DataLoader(
         train_dataset,

@@ -64,7 +64,7 @@ def main():
         parser.error(f"Checkpoint not found: {ck}")
 
     cfg = ProjectConfig()
-    output_dir = args.output_dir or str(cfg.results_dir / "evaluation_clip")
+    output_dir = args.output_dir or str(cfg.results_dir / "clip")
     os.makedirs(output_dir, exist_ok=True)
 
     if torch.cuda.is_available():
@@ -107,9 +107,9 @@ def main():
         pin_memory=device.type == "cuda",
     )
 
-    fusion = model.model.fusion
     all_labels = []
-    fused_scores = []
+    face_scores_all = []
+    full_scores_all = []
     t0 = time.perf_counter()
     with torch.no_grad():
         for face_crops, full_images, labels in tqdm(loader, desc="CLIP eval"):
@@ -118,17 +118,29 @@ def main():
             face_logits, full_logits = model.model(face_crops, full_images)
             face_probs = torch.sigmoid(face_logits).squeeze(1).cpu().numpy()
             full_probs = torch.sigmoid(full_logits).squeeze(1).cpu().numpy()
-            fused = fusion.face_weight * face_probs + fusion.full_weight * full_probs
             all_labels.extend(labels.numpy())
-            fused_scores.extend(fused)
+            face_scores_all.extend(face_probs)
+            full_scores_all.extend(full_probs)
     elapsed = time.perf_counter() - t0
 
     all_labels = np.array(all_labels)
-    fused_scores = np.array(fused_scores)
-    m = compute_metrics(all_labels, fused_scores, threshold=args.threshold)
+    face_scores_all = np.array(face_scores_all)
+    full_scores_all = np.array(full_scores_all)
+
+    face_m = compute_metrics(all_labels, face_scores_all, threshold=args.threshold)
+    m = compute_metrics(all_labels, full_scores_all, threshold=args.threshold)
 
     print("\n" + "=" * 60)
-    print(f"CLIP fused  (n={n}, threshold={args.threshold})")
+    print(f"CLIP Face Branch  (n={n}, threshold={args.threshold})")
+    print("=" * 60)
+    print(f"  Accuracy:  {face_m['accuracy']:.4f}")
+    print(f"  Precision: {face_m['precision']:.4f}")
+    print(f"  Recall:    {face_m['recall']:.4f}")
+    print(f"  F1:        {face_m['f1']:.4f}")
+    print(f"  AUC-ROC:   {face_m['auc_roc']:.4f}")
+
+    print("\n" + "=" * 60)
+    print(f"CLIP Full Image Branch  (n={n}, threshold={args.threshold})")
     print("=" * 60)
     print(f"  Accuracy:  {m['accuracy']:.4f}")
     print(f"  Precision: {m['precision']:.4f}")

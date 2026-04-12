@@ -16,7 +16,7 @@ class CLIPDualBranchDetector(nn.Module):
     The shared encoder learns universal AI-vs-real features; each head adapts
     those features to its input domain (face crop vs full image).
 
-    Fusion at inference: 0.6 * max(face_scores) + 0.4 * full_score
+    Each face and the full image are classified independently — no fusion.
     """
 
     def __init__(
@@ -76,26 +76,23 @@ class CLIPDualBranchDetector(nn.Module):
         return face_logit, full_logit
 
     @torch.no_grad()
-    def predict(self, face_crops_list: list, full_image: torch.Tensor) -> float:
+    def predict(self, face_crops_list: list, full_image: torch.Tensor):
         """
-        Inference with fusion.
+        Independent inference — no fusion.
 
         Args:
             face_crops_list: list of (1, 3, 224, 224) tensors
             full_image:      (1, 3, 224, 224)
         Returns:
-            float: AI probability [0, 1]
+            (full_prob, face_scores): full image P(AI) and list of per-face P(AI)
         """
         full_feat = self._encode(full_image)
-        full_prob  = torch.sigmoid(self.full_head(full_feat))[0, 0].item()
-
-        if not face_crops_list:
-            return full_prob
+        full_prob = torch.sigmoid(self.full_head(full_feat))[0, 0].item()
 
         face_scores = []
         for crop in face_crops_list:
-            feat  = self._encode(crop)
+            feat = self._encode(crop)
             score = torch.sigmoid(self.face_head(feat))[0, 0].item()
             face_scores.append(score)
 
-        return self.fusion.face_weight * max(face_scores) + self.fusion.full_weight * full_prob
+        return full_prob, face_scores
