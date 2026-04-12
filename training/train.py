@@ -78,6 +78,7 @@ from data.transforms import get_train_transforms, get_val_transforms
 from data.dual_branch_dataset import DualBranchDataset
 from ferretnet.lightning_module import FerretNetLightning
 from training.callbacks import ValMetricsCSV
+from training.run_context import print_distributed_env
 
 # PyTorch Lightning + torch: internal pytree deprecation (harmless for training).
 for _warn_cat in (FutureWarning, DeprecationWarning, UserWarning):
@@ -98,6 +99,12 @@ def main():
     parser.add_argument('--batch_size', type=int, default=None)
     parser.add_argument('--epochs', type=int, default=None)
     parser.add_argument('--lr', type=float, default=None)
+    parser.add_argument(
+        '--log_every_n_steps',
+        type=int,
+        default=25,
+        help='Log / progress-bar metrics every N training steps (default 25).',
+    )
     args = parser.parse_args()
 
     if args.resume and args.resume_weights_only:
@@ -213,12 +220,13 @@ def main():
         accumulate_grad_batches=ACCUM,
         callbacks=callbacks,
         default_root_dir=str(proj_cfg.project_root),
-        log_every_n_steps=50,
+        log_every_n_steps=args.log_every_n_steps,
         benchmark=(ACCELERATOR == 'gpu'),    # cuDNN benchmark only on CUDA
     )
 
     eff_bs = train_cfg.batch_size * ACCUM
     steps  = len(train_dataset) // eff_bs
+    print_distributed_env()
     print(f"\n{'='*60}")
     print(f"  Device:          {DEVICE_NAME}")
     print(f"  Accelerator:     {ACCELERATOR.upper()}")

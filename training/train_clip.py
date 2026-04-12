@@ -76,6 +76,7 @@ from data.transforms import get_train_transforms, get_val_transforms
 from data.dual_branch_dataset import DualBranchDataset
 from clip_detector.lightning_module import CLIPDetectorLightning
 from training.callbacks import ValMetricsCSV
+from training.run_context import print_distributed_env
 
 CLIP_IMAGE_SIZE = 224   # CLIP ViT-L/14 and ViT-B/32 both use 224×224
 
@@ -94,6 +95,12 @@ def main():
                         help='DataLoader workers (default: 12 on CUDA). Try 16 if GPU util is low.')
     parser.add_argument('--epochs',     type=int,   default=None)
     parser.add_argument('--lr',         type=float, default=None)
+    parser.add_argument(
+        '--log_every_n_steps',
+        type=int,
+        default=25,
+        help='Log / progress-bar metrics every N training steps (default 25; use 50 for quieter).',
+    )
     args = parser.parse_args()
 
     mp.set_start_method('spawn', force=True)
@@ -201,13 +208,14 @@ def main():
         accumulate_grad_batches=accum_grad,
         callbacks=callbacks,
         default_root_dir=str(proj_cfg.project_root),
-        log_every_n_steps=50,
+        log_every_n_steps=args.log_every_n_steps,
         benchmark=(ACCELERATOR == 'gpu'),
         num_sanity_val_steps=0,   # skip sanity check — gradient checkpointing + eval deadlocks
     )
 
     eff_bs = train_cfg.batch_size * accum_grad
     steps  = len(train_dataset) // eff_bs
+    print_distributed_env()
     print(f"\n{'='*60}")
     print(f"  Model:           CLIP {args.model}  ({clip_model_name})")
     print(f"  Device:          {DEVICE_NAME}")
@@ -223,6 +231,12 @@ def main():
     print(f"  Val metrics CSV: {(proj_cfg.results_dir / 'val_metrics_clip.csv').resolve()}")
     if _resuming:
         print("  Resume:          persistent_workers=OFF (avoids post-restore dataloader freezes)")
+    print(f"{'='*60}")
+    if train_cfg.precision == "16-mixed":
+        print(
+            "  Note: Lightning model summary uses FP32 for estimated size (MB);\n"
+            "        training still runs in 16-mixed on GPU (same as PyTorch Lightning warning).\n"
+        )
     print(f"{'='*60}\n")
 
     trainer.fit(
